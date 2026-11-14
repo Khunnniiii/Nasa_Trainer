@@ -1,59 +1,85 @@
 # Nasa Trainer
 
-A small browser-based strategy game inspired by NASA mission planning on Mars. You manage a crewed outpost, allocate limited power, survive environmental threats, and make decisions that affect air, food, radiation exposure, and research progress.
+A browser-based educational simulation designed to teach the basics of mission planning for a Mars outpost. Players must balance power, food, air, and radiation risk while making critical decisions that reflect real-world constraints faced by astronauts and mission planners.
 
-## Overview
+## Why this project exists
 
-This project is a single-page web app built with HTML, CSS, and JavaScript. The game presents a simplified survival simulation where each day the player decides how to distribute power between:
+This project was built as a learning and demo project focused on:
 
-- Life support
-- Greenhouse
-- Storm shelter
-- Science lab
+- interactive web game design
+- JavaScript state management
+- UI logic for game systems
+- creating meaningful educational content using a real-world theme
+- combining gameplay with NASA-inspired science communication
 
-The goal is to keep the crew alive long enough to finish the mission while earning research points and unlock upgrades for later runs.
+The experience is intentionally simple, approachable, and engaging while still highlighting key concepts from space exploration and resource management.
+
+## Project concept
+
+Nasa Trainer puts the player in charge of a small Mars base. Each day, the crew needs enough power to keep essential systems running:
+
+- Life support for oxygen and breathable air
+- Greenhouse for food and plant production
+- Storm shelter for protection from solar radiation
+- Science lab for research and progression
+
+Every choice matters. If the crew runs out of air, food, or reaches a dangerous radiation level, the mission fails.
+
+## Educational value
+
+This project demonstrates several core learning themes:
+
+- resource trade-offs and scarcity
+- planning under uncertainty
+- systems thinking and simulation design
+- cause-and-effect decision making
+- using a fictional game to explain real scientific ideas
+
+It also introduces players to actual space-related topics, including:
+
+- solar storms and radiation risk
+- Mars dust events and reduced solar power
+- communication delays between Earth and Mars
+- real mission data and NASA-inspired examples
 
 ## Features
 
-- Daily power allocation management
-- Realistic Mars hazards including:
-  - solar radiation storms
-  - dust storms
-  - emergency events
-- Research and upgrade system
-- Earth quiz questions for bonus science points
-- Rover mini-game for extra research gains
-- NASA-inspired lore and mission facts
-- Responsive browser gameplay with no build step
+- dynamic day-by-day mission gameplay
+- power allocation mechanics with clear trade-offs
+- survival systems for air, food, and radiation
+- random hazards and emergency events
+- upgrade system for long-term progression
+- quiz-style learning moments tied to space science
+- rover mini-game for extra research points
+- educational NASA facts integrated into the gameplay loop
 
-## Gameplay
+## Tech stack
 
-Each mission lasts a set number of days. You must balance your resources carefully:
+This project is built using a lightweight frontend stack:
 
-- Air keeps the crew alive
-- Food sustains the crew
-- Radiation exposure must stay under the limit
-- Power is limited, so every decision has trade-offs
+- HTML for layout and structure
+- CSS for styling and visual presentation
+- JavaScript for game logic and interaction
 
-Successful missions award research points that can be spent on permanent upgrades and next-mission gear.
+## File structure
 
-## Project Structure
+```text
+Nasa_Trainer/
+├── index.html
+├── style.css
+├── game.js
+├── README.md
+```
 
-- `index.html` — main page shell
-- `style.css` — visual styling and layout
-- `game.js` — game logic, state, UI, and mission systems
+## How to run it
 
-## Running the Game
+### Option 1: Open it directly
 
-Since this is a static web project, you can run it in any browser.
+Open `index.html` in a browser.
 
-### Option 1: Open directly
+### Option 2: Run a local web server
 
-- Open `index.html` in a browser
-
-### Option 2: Use a local web server
-
-From the project directory:
+From the project directory, run:
 
 ```bash
 python -m http.server 8000
@@ -65,9 +91,30 @@ Then visit:
 http://localhost:8000
 ```
 
+## Gameplay summary
+
+Players make decisions each day by assigning limited power to key systems. The challenge is to keep the base stable while also earning research points. As the mission progresses, players unlock upgrades and improve their chances of surviving longer missions.
+
+This creates a simple but effective project demo for:
+
+- game prototyping
+- educational simulation design
+- web-based interactive experiences
+- STEM communication through playful mechanics
+
+## Learning goals
+
+This project is a good example of how to turn technical concepts into a simple interactive experience. It can be used to explore:
+
+- JavaScript event-driven programming
+- DOM manipulation and rendering
+- interactive UI patterns
+- design of game systems and balancing
+- educational storytelling through simulation
+
 ## Notes
 
-The game uses NASA-based examples and real mission facts as educational flavor, but it is designed as an interactive training/simulation experience rather than a scientific simulator.
+The project is inspired by real NASA examples and mission concepts, but it is intentionally designed as a simplified game rather than a scientifically exact simulator.
 
 ## License
 
