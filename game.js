@@ -288,6 +288,7 @@ const ICON = {
   dose: '<circle cx="12" cy="12" r="1.5"/><path d="M12 10.5 8.5 4.5a9 9 0 0 1 7 0zM13.3 12.8l3.5 6a9 9 0 0 1-7 .2zM10.7 12.8l-3.5 6A9 9 0 0 1 3 12z"/>',
   food: '<path d="M12 7c-4-3-9 0-7 6 1 4 4 8 7 6 3 2 6-2 7-6 2-6-3-9-7-6zM12 7c0-2 1-4 3-4"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
   dust: '<path d="M2 8c3-3 5 3 8 0s5 3 8 0M2 14c3-3 5 3 8 0s5 3 8 0M2 20c3-3 5 3 8 0s5 3 8 0"/>',
   walls: '<path d="M3 5h18v14H3zM3 12h18M9 5v7M15 12v7"/>',
   tanks: '<rect x="6" y="3" width="12" height="18" rx="5"/><path d="M6 9h12"/>',
@@ -305,9 +306,45 @@ const ic = (k) =>
   `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ""}</svg>`;
 const AVC = ["#62c3ff", "#35d8a0", "#ffc933", "#ff8fa0"];
 
+/* ---------- DARK / LIGHT MODE ---------- */
+const THEME_KEY = "marsOutpostTheme";
+let theme = "dark"; // default. Change to "light" if you prefer
+try {
+  theme = localStorage.getItem(THEME_KEY) || theme;
+} catch (e) {}
+const themeBtn = document.createElement("button");
+themeBtn.className = "theme-toggle";
+function setTheme(t, store) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  themeBtn.innerHTML = ic(t === "dark" ? "sun" : "moon");
+  themeBtn.setAttribute(
+    "aria-label",
+    t === "dark" ? "Switch to light mode" : "Switch to dark mode",
+  );
+  if (store)
+    try {
+      localStorage.setItem(THEME_KEY, t);
+    } catch (e) {}
+}
+themeBtn.onclick = () => setTheme(theme === "dark" ? "light" : "dark", true);
+document.body.appendChild(themeBtn);
+setTheme(theme, false);
+
 /* ---------- STATE ---------- */
 let game = null;
 const app = document.getElementById("app");
+
+/* ---------- COLLAPSIBLE SECTIONS (stay open/closed after re-render) ---------- */
+const setUI = (k, v) => {
+  if (game) game.ui[k] = v;
+};
+// Small "tap to read more" link inside a card
+const more = (key, title, body) =>
+  `<details class="more" ${game.ui[key] ? "open" : ""} ontoggle="setUI('${key}',this.open)"><summary>${title}</summary>${body}</details>`;
+// A whole card that opens and closes
+const fold = (key, title, body, badge = "") =>
+  `<details class="card fold" ${game.ui[key] ? "open" : ""} ontoggle="setUI('${key}',this.open)"><summary>${title}${badge}</summary><div class="body">${body}</div></details>`;
 
 /* ---------- SAVE DATA (stays in the browser between missions) ---------- */
 const SAVE_KEY = "marsOutpostSave";
@@ -431,6 +468,7 @@ function newGame() {
     events,
     emergencies,
     penalty: {},
+    ui: {}, // which collapsible sections are open
     report: "",
     result: null,
   };
@@ -715,7 +753,7 @@ function forecastStrip() {
       : e
         ? e.type === "storm"
           ? "Radiation"
-          : "Dust storm"
+          : "Dust"
         : "Calm";
     tiles += `<div class="ftile ${known && e ? e.type : ""} ${d === game.sol ? "now" : ""}"><small>${d === game.sol ? "Today" : "Day " + d}</small><span>${icon}</span><small>${name}</small></div>`;
   }
@@ -725,10 +763,10 @@ function forecastStrip() {
       ? ""
       : nx
         ? nx.type === "storm"
-          ? `<div class="advice storm"><b>Radiation storm tomorrow!</b> Plan to put 3 power into the Storm shelter tomorrow.</div>`
-          : `<div class="advice dust"><b>Dust storm tomorrow!</b> You will only have ${CONFIG.dustPower + lv("panels")} power. Stock up on air and food today.</div>`
-        : `<div class="advice calm">Tomorrow looks calm. A good time for science!</div>`;
-  return `<div class="card"><h2>Mission Control forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
+          ? `<div class="advice storm"><b>Storm tomorrow.</b> Put 3 power in the shelter then.</div>`
+          : `<div class="advice dust"><b>Dust tomorrow.</b> Only ${CONFIG.dustPower + lv("panels")} power. Stock up on air and food.</div>`
+        : `<div class="advice calm">Tomorrow looks calm. Good time for science.</div>`;
+  return `<div class="card"><h2>Forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
 }
 
 function quizCard() {
@@ -802,7 +840,7 @@ function startRover() {
   }, 1000);
 }
 
-/* ---------- SIDE PANELS: news + messages from Earth ---------- */
+/* ---------- NEWS + MESSAGES FROM EARTH ---------- */
 // Real facts about Mars and NASA missions. Add your own!
 const NEWS = [
   "Curiosity rover has explored Gale Crater on Mars since 2012.",
@@ -911,24 +949,18 @@ function todaysMessages() {
 }
 const msgHTML = (m) =>
   `<div class="msg ${m.urgent ? "urgent" : ""}"><span class="av" style="background:${AVC[m.from.length % 4]}">${m.from[0]}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${m.ago} ago</small></div></div>`;
-function messagePanel() {
-  return `<div class="card"><h2>From Earth</h2>${todaysMessages().map(msgHTML).join("")}</div>`;
-}
-function mobileMsg() {
-  return `<div class="card only-narrow">${msgHTML(todaysMessages()[0])}</div>`;
-}
-function newsPanel() {
-  const ev = todayEvent(),
-    lines = [];
-  if (ev?.type === "storm")
-    lines.push("BREAKING: Radiation storm hits the outpost!");
-  else if (ev?.type === "dust")
-    lines.push("BREAKING: Dust storm cuts solar power!");
-  else lines.push(`Crew has earned ${game.science} research points so far.`);
-  for (let i = 0; i < 3; i++)
-    lines.push(NEWS[(game.sol * 3 + i) % NEWS.length]);
-  return `<div class="card"><h2>Mars Daily</h2><small class="fact">Day ${game.sol} edition</small>
-    ${lines.map((l, i) => `<p class="headline ${i === 0 && l.startsWith("BREAKING") ? "breaking" : ""}">${l}</p>`).join("")}</div>`;
+
+// One collapsible card with messages + two news facts. Shows a "!" when a message is urgent.
+function extras() {
+  const msgs = todaysMessages();
+  const news = [0, 1].map((i) => NEWS[(game.sol * 3 + i) % NEWS.length]);
+  return fold(
+    "news",
+    "From Earth &amp; news",
+    msgs.map(msgHTML).join("") +
+      news.map((l) => `<p class="headline">${l}</p>`).join(""),
+    msgs[0].urgent ? '<span class="dot">!</span>' : "",
+  );
 }
 
 function projection() {
@@ -969,20 +1001,24 @@ function meter(icon, label, value, max, lowWhen) {
   return `<div class="meter ${low ? "low" : ""}">
     <div class="icon">${ic(icon)}</div>
     <div class="bar"><i style="width:${Math.max(0, (value / max) * 100)}%"></i></div>
-    <div class="label">${label}: ${shown}</div></div>`;
+    <div class="label">${label} ${shown}/${max}</div></div>`;
 }
 
 function render() {
   if (game.result) return renderEnd();
   const ev = todayEvent(),
-    next = game.events[game.sol + 1],
     p = power();
 
+  // Today's event (short, with the NASA fact tucked away)
   let eventCard = "";
   if (ev?.type === "storm")
-    eventCard = `<div class="card warn"><h2>Radiation storm today!</h2><p><b>${ev.data.title}.</b> Radiation hits the base this day. Power the shelter to protect the crew.</p><p class="fact">${ev.data.fact}</p></div>`;
+    eventCard = `<div class="card warn"><h2>${ic("dose")} Radiation storm today</h2>
+      <p>Power the shelter. 3 units blocks nearly all radiation.</p>
+      ${more("fact", "Real NASA fact", `<p class="fact"><b>${ev.data.title}.</b> ${ev.data.fact}</p>`)}</div>`;
   if (ev?.type === "dust")
-    eventCard = `<div class="card warn"><h2>${ev.data.title}!</h2><p>Dust blocks the Sun. Power drops to <b>${p} units</b> today.</p><p class="fact">${ev.data.fact}</p></div>`;
+    eventCard = `<div class="card warn"><h2>${ic("dust")} ${ev.data.title}</h2>
+      <p>Power drops to <b>${p} units</b> today.</p>
+      ${more("fact", "Real NASA fact", `<p class="fact">${ev.data.fact}</p>`)}</div>`;
 
   const cells = Array.from(
     { length: Math.max(p, CONFIG.normalPower + lv("panels")) },
@@ -992,16 +1028,15 @@ function render() {
 
   const sgn = (n) => (n > 0 ? "+" + n : n < 0 ? "−" + Math.abs(n) : "0");
   const pr = projection();
-  const proj = `<div class="proj"><b>If you run this day:</b>
+  const proj = `<div class="proj"><b>Result:</b>
     <span class="${pr.air < 0 ? "neg" : "pos"}">${ic("L")} Air ${sgn(pr.air)}</span>
     <span class="${pr.food < 0 ? "neg" : "pos"}">${ic("food")} Food ${sgn(pr.food)}</span>
-    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Radiation ${sgn(pr.dose)}</span></div>`;
+    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Rad ${sgn(pr.dose)}</span></div>`;
+
   const systems = SYSTEMS.map(
     (s) => `
-    <div class="mod m-${s.key}">
+    <div class="mod m-${s.key}" title="${s.hint}">
       <div class="mh">${ic(s.key)}<b>${s.name}</b></div>
-      <p class="hint">${s.hint}</p>
-      <div class="slots">${[1, 2, 3, 4].map((i) => `<i class="${i <= game.alloc[s.key] ? "on" : ""}"></i>`).join("")}</div>
       <div class="stepper">
         <button onclick="change('${s.key}',-1)" aria-label="Less power to ${s.name}" ${game.alloc[s.key] === 0 ? "disabled" : ""}>−</button>
         <span>${game.alloc[s.key]}</span>
@@ -1010,35 +1045,60 @@ function render() {
     </div>`,
   ).join("");
 
+  // The hints live here now, so the tiles stay small
+  const help = more(
+    "sys",
+    "What does each system do?",
+    SYSTEMS.map((s) => `<p class="fact"><b>${s.name}:</b> ${s.hint}</p>`).join(
+      "",
+    ) +
+      `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>`,
+  );
+
+  // How many bonus activities are still open today (shown as a small number)
+  const bonusLeft =
+    (game.quizRes[game.sol] ? 0 : 1) + (game.roverDay === game.sol ? 0 : 1);
+
   app.className = "wide";
-  app.innerHTML = `<div class="layout"><aside class="side">${newsPanel()}</aside><div class="center">
-    <button class="back" onclick="quitMission()">◀ Menu</button>
-    ${mobileMsg()}
-    <h1>Mars Outpost</h1>
-    <p class="sub">Keep your crew alive for ${CONFIG.totalSols} days on Mars.</p>
-    <div class="card hud">
-      <div class="progress"><i style="width:${(game.sol / CONFIG.totalSols) * 100}%"></i></div>
-      <p class="fact">Day ${game.sol} of ${CONFIG.totalSols} · Research points: <b>${game.science}</b></p>
-      <div class="meters">
-        ${meter("L", "Air", game.air, game.maxStock, (v) => v <= 3)}
-        ${meter("food", "Food", game.food, game.maxStock, (v) => v <= 3)}
-        ${meter("dose", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
-      </div>
-      <p class="fact">Radiation dose never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>
+  app.innerHTML = `<div class="layout">
+    <div class="topbar">
+      <button class="back" onclick="quitMission()">◀ Menu</button>
+      <span class="brand">Mars Outpost</span>
     </div>
-    ${game.report ? `<div class="card news">${game.report}</div>` : ""}
-    ${forecastStrip()}
-    ${game.penalty[game.sol] ? `<div class="card warn"><h2>Damage from yesterday</h2><p>Broken equipment means <b>${game.penalty[game.sol]} less power</b> today.</p></div>` : ""}
-    ${eventCard}
-    <div class="card">
-      ${scene()}<h2>Power: ${used()} of ${p} units</h2>
-      <div class="cells">${cells}</div>
-      <div class="mods">${systems}</div>${proj}
-      <p class="fact">Messages from Earth take about ${DELAYS[game.sol % 4]} to arrive, so you decide.</p>
-      <div class="acts">${quizCard()}${roverButton()}</div>
-      ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">${ic("battery")} Use battery pack (+3 power today)</button>` : ""}
-      <button class="go" onclick="runSol()">Run Day ${game.sol} ▶</button>
-    </div></div><aside class="side">${messagePanel()}</aside></div>`;
+
+    <div class="col">
+      <div class="card hud">
+        <div class="hudrow">
+          <span class="big">Day ${game.sol}<small> / ${CONFIG.totalSols}</small></span>
+          <span>${ic("R")} ${game.science} pts</span>
+        </div>
+        <div class="progress"><i style="width:${(game.sol / CONFIG.totalSols) * 100}%"></i></div>
+        <div class="meters">
+          ${meter("L", "Air", game.air, game.maxStock, (v) => v <= 3)}
+          ${meter("food", "Food", game.food, game.maxStock, (v) => v <= 3)}
+          ${meter("dose", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
+        </div>
+      </div>
+      ${game.report ? `<div class="card news">${game.report}</div>` : ""}
+      ${game.penalty[game.sol] ? `<div class="card warn"><b>Damaged equipment:</b> ${game.penalty[game.sol]} less power today.</div>` : ""}
+      ${eventCard}
+      ${forecastStrip()}
+    </div>
+
+    <div class="col">
+      <div class="card">
+        ${scene()}
+        <div class="powerhead"><h2>Power ${used()} / ${p}</h2><div class="cells">${cells}</div></div>
+        <div class="mods">${systems}</div>
+        ${proj}
+        ${help}
+        ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">${ic("battery")} Use battery pack (+3 power today)</button>` : ""}
+        <button class="go" onclick="runSol()">Run Day ${game.sol} ▶</button>
+      </div>
+      ${fold("bonus", "Bonus activities", quizCard() + roverButton(), bonusLeft ? `<span class="pill">${bonusLeft}</span>` : "")}
+      ${extras()}
+    </div>
+  </div>`;
 }
 
 function renderEnd() {
