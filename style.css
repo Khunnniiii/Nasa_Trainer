@@ -1569,6 +1569,33 @@ button.buy:active {
   border-bottom: 1px solid rgba(127, 127, 127, 0.3);
 }
 
+/* ===== Ask Earth, battery ===== */
+.choice.rec {
+  outline: 3px solid var(--mint);
+  outline-offset: 2px;
+}
+.choice.rec::after {
+  content: "Mission Control suggests this";
+  display: block;
+  margin-top: 4px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--mint);
+}
+.earthbox {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper2);
+}
+.earthbox .go {
+  width: 100%;
+}
+.mod.m-B {
+  grid-column: 1 / -1;
+}
+
 /* ===== Quiet-day game events (not NASA data): dashed border, lilac ===== */
 :root {
   --game-bg: #e9e1ff;
