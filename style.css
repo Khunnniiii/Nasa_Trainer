@@ -1,0 +1,550 @@
+/* ===== Colors: change these to re-theme the whole game ===== */
+:root {
+  --night: #0d1238;
+  --panel: #19205a;
+  --panel-2: #232c75;
+  --text: #f4f6ff;
+  --muted: #a9b2e8;
+  --sun: #ffd23f; /* buttons, power */
+  --good: #2ee6c5; /* healthy meters */
+  --danger: #ff4d6d; /* warnings, low meters */
+  --rock: #c8502e; /* Mars ground */
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font:
+    18px/1.45 "Fredoka",
+    "Trebuchet MS",
+    system-ui,
+    sans-serif;
+  background: var(--night);
+}
+
+/* ===== Background scenery ===== */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(2px 2px at 20% 30%, #fff, transparent),
+    radial-gradient(2px 2px at 70% 20%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 45% 55%, #fff, transparent),
+    radial-gradient(2px 2px at 85% 60%, #fff, transparent),
+    linear-gradient(#0d1238, #3a2a6b 70%, #b5503a);
+}
+.ground {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 22vh;
+  z-index: -1;
+  background: linear-gradient(#d9663d, #8e3320);
+  border-radius: 50% 50% 0 0 / 30% 30% 0 0;
+}
+.dome {
+  position: absolute;
+  left: 50%;
+  top: -34px;
+  width: 90px;
+  height: 45px;
+  transform: translateX(-50%);
+  background: linear-gradient(#cfeaff, #7fb4e6);
+  border-radius: 90px 90px 0 0;
+  box-shadow: 0 0 24px #9fd4ff88;
+}
+
+/* ===== Layout ===== */
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px 14px 90px;
+}
+h1 {
+  font-size: 2.1rem;
+  margin: 6px 0 2px;
+  letter-spacing: 0.5px;
+}
+h2 {
+  font-size: 1.25rem;
+  margin: 0 0 6px;
+}
+p {
+  margin: 6px 0;
+}
+.sub {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0 16px 18px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--panel);
+  border-radius: 20px;
+  padding: 16px;
+  margin: 12px 0;
+  border: 2px solid var(--panel-2);
+}
+.card.warn {
+  border-color: var(--danger);
+  background: #3a1840;
+}
+.card.news {
+  border-color: var(--sun);
+}
+.fact {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* ===== Meters ===== */
+.meters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.meter {
+  background: var(--panel-2);
+  border-radius: 16px;
+  padding: 10px;
+  text-align: center;
+}
+.meter .icon {
+  font-size: 1.8rem;
+}
+.meter .label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.meter .bar {
+  height: 12px;
+  background: #0d1238;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 6px 0 2px;
+}
+.meter .bar i {
+  display: block;
+  height: 100%;
+  background: var(--good);
+  transition:
+    width 0.5s,
+    background 0.5s;
+}
+.meter.low .bar i {
+  background: var(--danger);
+}
+.meter.low {
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  50% {
+    transform: scale(1.03);
+  }
+}
+.progress {
+  height: 10px;
+  background: #0d1238;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.progress i {
+  display: block;
+  height: 100%;
+  background: var(--sun);
+  transition: width 0.4s;
+}
+
+/* ===== Power cells ===== */
+.cells {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 10px;
+  flex-wrap: wrap;
+}
+.cell {
+  width: 26px;
+  height: 34px;
+  border-radius: 7px;
+  border: 2px solid var(--sun);
+}
+.cell.on {
+  background: var(--sun);
+  box-shadow: 0 0 10px #ffd23f99;
+}
+.cell.dead {
+  border-color: var(--muted);
+  opacity: 0.3;
+}
+
+/* ===== System controls ===== */
+.system {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 2px solid var(--panel-2);
+}
+.system:first-of-type {
+  border-top: 0;
+}
+.system .icon {
+  font-size: 2rem;
+}
+.system .info {
+  flex: 1;
+}
+.system .info b {
+  font-size: 1.05rem;
+}
+.system .info small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.25;
+}
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.stepper button {
+  width: 46px;
+  height: 46px;
+  font-size: 1.5rem;
+  padding: 0;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.stepper button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* ===== Buttons ===== */
+button {
+  font: inherit;
+  font-weight: 700;
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  background: var(--sun);
+  color: #2b2100;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+button:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+button.go {
+  width: 100%;
+  font-size: 1.25rem;
+  margin-top: 10px;
+}
+
+@media (max-width: 440px) {
+  .system .info small {
+    display: none;
+  }
+  h1 {
+    font-size: 1.7rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ===== Emergency pop-up ===== */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0d1238dd;
+}
+.alert {
+  width: 100%;
+  max-width: 480px;
+  background: var(--panel);
+  border: 3px solid var(--danger);
+  border-radius: 22px;
+  padding: 18px;
+  box-shadow: 0 0 40px #ff4d6d66;
+  animation: shake 0.4s;
+}
+.alert h2 {
+  font-size: 1.5rem;
+  color: var(--danger);
+}
+.timer {
+  height: 14px;
+  background: #0d1238;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 10px 0 4px;
+}
+.timer i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--danger);
+  transition: width 1s linear;
+}
+.count {
+  text-align: center;
+  margin: 0 0 8px;
+}
+.count b {
+  font-size: 1.6rem;
+}
+button.choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 2px solid var(--sun);
+}
+button.choice small {
+  display: block;
+  font-weight: 400;
+  color: var(--sun);
+}
+@keyframes shake {
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
+}
+
+/* ===== Emergency outcome ===== */
+.g-good {
+  color: var(--good);
+}
+.g-ok {
+  color: var(--sun);
+}
+.g-bad {
+  color: var(--danger);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.chip {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.chip.plus {
+  background: #2ee6c533;
+  color: var(--good);
+}
+.chip.minus {
+  background: #ff4d6d33;
+  color: var(--danger);
+}
+
+/* ===== Upgrade menu ===== */
+.pips {
+  color: var(--sun);
+  letter-spacing: 3px;
+  font-size: 0.9rem;
+}
+button.buy {
+  min-width: 84px;
+  white-space: nowrap;
+}
+button.buy:disabled {
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: default;
+}
+button.item {
+  width: 100%;
+  margin-top: 10px;
+  background: var(--panel-2);
+  color: var(--sun);
+  border: 2px solid var(--sun);
+}
+
+/* ===== Main menu ===== */
+.hero {
+  text-align: center;
+  padding: 8vh 0 4vh;
+}
+.hero .logo {
+  font-size: 4.5rem;
+  line-height: 1;
+}
+.hero h1 {
+  font-size: 3rem;
+  margin: 8px 0;
+}
+button.alt {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 2px solid var(--sun);
+}
+.pill {
+  background: var(--sun);
+  color: #2b2100;
+  border-radius: 20px;
+  padding: 2px 10px;
+  margin-left: 6px;
+  font-size: 0.95rem;
+}
+@media (max-width: 440px) {
+  .hero h1 {
+    font-size: 2.3rem;
+  }
+}
+
+/* ===== In-game back button ===== */
+button.back {
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  border: 2px solid var(--muted);
+}
+
+/* ===== Forecast strip ===== */
+.fgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 8px 0;
+}
+.ftile {
+  background: var(--panel-2);
+  border-radius: 14px;
+  padding: 8px 4px;
+  text-align: center;
+  border: 2px solid transparent;
+}
+.ftile span {
+  display: block;
+  font-size: 2rem;
+  line-height: 1.2;
+}
+.ftile small {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.ftile.now {
+  border-color: var(--sun);
+}
+.ftile.storm {
+  background: #5a1f3f;
+  border-color: var(--danger);
+  box-shadow: 0 0 14px #ff4d6d66;
+}
+.ftile.dust {
+  background: #5a3a1f;
+  border-color: #ff9a4d;
+}
+.advice {
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 1.05rem;
+}
+.advice.storm {
+  background: #ff4d6d33;
+  border: 2px solid var(--danger);
+}
+.advice.dust {
+  background: #ff9a4d33;
+  border: 2px solid #ff9a4d;
+}
+.advice.calm {
+  background: #2ee6c522;
+  border: 2px solid var(--good);
+}
+
+/* ===== Activities ===== */
+.acts {
+  margin-top: 10px;
+}
+.act {
+  background: var(--panel-2);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+.act p {
+  margin: 4px 0;
+}
+button.opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 6px;
+  background: var(--panel);
+  color: var(--text);
+  border: 2px solid var(--muted);
+  padding: 8px 14px;
+}
+button.item small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+}
+button.item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.arena {
+  position: relative;
+  height: 230px;
+  background: #7a2f1e;
+  border-radius: 16px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.rock {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  font-size: 2rem;
+  padding: 0;
+  background: #a8492c;
+  border-radius: 50%;
+  animation: pop 0.2s;
+}
+@keyframes pop {
+  from {
+    transform: scale(0.3);
+  }
+}
