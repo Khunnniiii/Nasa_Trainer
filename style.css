@@ -875,6 +875,66 @@ button.choice small {
   margin: 8px 0;
 }
 
+/* ===== Cargo bay, stars, checklist ===== */
+.bay {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.bay span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 72px;
+  padding: 6px;
+  border: 3px dashed var(--muted);
+  border-radius: 10px;
+  text-align: center;
+  color: var(--muted);
+}
+.bay span.full {
+  border: var(--edge);
+  background: var(--sun);
+  color: #1e1a3c;
+}
+.bay small {
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+button.pack {
+  background: var(--field);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+button.pack.on {
+  background: var(--mint);
+  color: #1e1a3c;
+}
+.stars {
+  color: var(--sun);
+  letter-spacing: 2px;
+}
+.chk {
+  margin: 4px 0;
+  font-weight: 800;
+}
+.chk.ok {
+  color: var(--good);
+}
+.chk.no {
+  color: var(--bad);
+}
+
 @media (max-width: 440px) {
   .hero h1 {
     font-size: 2.6rem;

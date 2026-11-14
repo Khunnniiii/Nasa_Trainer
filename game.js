@@ -5,42 +5,71 @@
 
 /* ---------- CONFIG: tweak the game here ---------- */
 const CONFIG = {
-  totalSols: 20, // how long the mission lasts
+  daysPerStep: 10, // Mission 1 = 10 days, Mission 2 = 20, Mission 3 = 30 ...
+  maxLevel: 5, // last mission tier (5 = 60 days). Replay it for stars.
   normalPower: 8, // power units on a normal day
-  dustPower: 4, // power units on a dust storm day
+  dustPower: 4, // power units on a dust storm day (gets lower on harder missions)
   startAir: 8,
   startFood: 8,
   maxStock: 12,
+  crewAir: 6, // air the crew uses each day
+  crewFood: 2, // food the crew eats each day
   doseLimit: 10, // reach this and the crew goes home
-  stormCount: 4,
-  dustCount: 3,
-  emergencyCount: 3, // surprise emergencies per mission
-  emergencyTime: 12, // seconds the player has to decide
+  stormStrength: 6, // radiation of a storm on Mission 1 (grows on harder missions)
+  emergencyTime: 12, // seconds to decide on Mission 1 (shorter on harder missions)
+  starScience: 2, // research points per day needed for the science star
+  baseCargoSlots: 2, // how many upgrades/items fit in the rocket
+  stormRate: 0.18, // storms per day (18% of days)
+  dustRate: 0.12,
+  emergencyRate: 0.15,
+  rateGrowth: 0.01, // how much those rates grow per mission level
 };
 
-// The four things the player powers. "icon" is shown in the UI.
+const RANKS = ["Rookie", "Cadet", "Pilot", "Commander", "Captain", "Legend"];
+
+// Everything that depends on the mission level lives here.
+function tierInfo(lvl) {
+  const t = Math.min(Math.max(0, lvl), CONFIG.maxLevel);
+  const days = CONFIG.daysPerStep * (t + 1);
+  const g = CONFIG.rateGrowth * t;
+  return {
+    level: t,
+    days,
+    rank: RANKS[t] || "Legend",
+    storms: Math.max(1, Math.round(days * (CONFIG.stormRate + g))),
+    dusts: Math.max(1, Math.round(days * (CONFIG.dustRate + g))),
+    emergencies: Math.max(1, Math.round(days * (CONFIG.emergencyRate + g))),
+    storm: CONFIG.stormStrength + Math.floor(t / 2), // radiation of a storm
+    dust: Math.max(2, CONFIG.dustPower - Math.floor(t / 2)), // power on dust days
+    time: Math.max(6, CONFIG.emergencyTime - t), // emergency timer
+  };
+}
+const missionDays = (lvl) => tierInfo(lvl).days;
+const cargoSlots = (lvl) =>
+  Math.min(
+    3,
+    CONFIG.baseCargoSlots + Math.floor(Math.min(lvl, CONFIG.maxLevel) / 2),
+  );
+
+// The four things the player powers.
 const SYSTEMS = [
   {
     key: "L",
-    icon: "",
     name: "Life support",
-    hint: "Makes air. Needs 2 units a day to break even.",
+    hint: `Makes air. The crew breathes ${CONFIG.crewAir} air a day and each unit makes 2.`,
   },
   {
     key: "G",
-    icon: "",
     name: "Greenhouse",
-    hint: "Grows food and a little air. 1 unit feeds the crew.",
+    hint: `Each unit grows 2 food and 1 air. The crew eats ${CONFIG.crewFood} food a day.`,
   },
   {
     key: "S",
-    icon: "",
     name: "Storm shelter",
-    hint: "Shields the crew. 3 units blocks nearly all radiation.",
+    hint: "Each unit blocks 2 radiation in a storm. With no shelter you also take a little radiation every day.",
   },
   {
     key: "R",
-    icon: "",
     name: "Science lab",
     hint: "Earns research points. Nothing else.",
   },
@@ -348,123 +377,171 @@ const fold = (key, title, body, badge = "") =>
 
 /* ---------- SAVE DATA (stays in the browser between missions) ---------- */
 const SAVE_KEY = "marsOutpostSave";
-let save = { points: 0, up: {}, items: {} };
+const freshSave = () => ({
+  points: 0,
+  up: {}, // upgrades you own: { key: level }
+  items: {}, // one-mission items you bought: { key: 1 }
+  cargo: [], // what is packed for the next mission
+  level: 0, // which mission you are on (0 = Mission 1)
+  stars: {}, // best stars per mission level
+});
+let save = freshSave();
 try {
   const t = JSON.parse(localStorage.getItem(SAVE_KEY));
-  if (t) save = { points: t.points || 0, up: t.up || {}, items: t.items || {} };
+  if (t)
+    save = {
+      points: t.points || 0,
+      up: t.up || {},
+      items: t.items || {},
+      cargo: Array.isArray(t.cargo) ? t.cargo : [],
+      level: Math.min(CONFIG.maxLevel, t.level || 0),
+      stars: t.stars || {},
+    };
 } catch (e) {}
 const persist = () => {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch (e) {}
 };
-const lv = (k) => save.up[k] || 0; // current level of an upgrade
-const take = (k) => {
-  const n = save.items[k] || 0;
-  save.items[k] = 0;
-  persist();
-  return n;
-}; // one-mission items
+const owned = (k) => save.up[k] || 0; // level you own (used in menus)
+// Level that counts in a mission: only upgrades packed in the rocket work!
+const lv = (k) => (game && game.cargo && game.cargo.includes(k) ? owned(k) : 0);
 
-// Permanent upgrades. costs = price of each level. Add your own and use lv("key") in the rules below.
+// Permanent upgrades. costs = price of each level.
+// You keep them forever, but only a few fit in the rocket each mission.
 const UPGRADES = [
   {
     key: "panels",
-    icon: "",
     name: "Better solar panels",
     desc: "+1 power every day.",
     costs: [15, 30],
   },
   {
     key: "walls",
-    icon: "",
     name: "Thicker shelter walls",
     desc: "Blocks 1 more radiation in every storm.",
     costs: [12, 25],
   },
   {
     key: "tanks",
-    icon: "",
     name: "Bigger tanks",
     desc: "Start with +2 air and +2 food, and store more.",
     costs: [10, 20],
   },
   {
     key: "seeds",
-    icon: "",
     name: "Hardy seeds",
     desc: "Each greenhouse unit grows 1 more food.",
     costs: [20],
   },
   {
     key: "drills",
-    icon: "⏱",
     name: "Emergency drills",
     desc: "+4 seconds to decide in emergencies.",
     costs: [8, 16],
   },
 ];
-// One-mission items. Used up when the next mission starts.
+// One-mission items. Used up when the mission starts.
 const ITEMS = [
   {
     key: "warning",
-    icon: "",
     name: "Early-warning satellite",
-    desc: "Next mission only: see storms 2 days ahead.",
+    desc: "One mission only: see storms 4 days ahead.",
     cost: 6,
   },
   {
     key: "battery",
-    icon: "",
     name: "Battery pack",
-    desc: "Next mission only: +3 power on a day you choose.",
+    desc: "One mission only: +3 power on a day you choose.",
     cost: 8,
   },
 ];
 
+/* ---------- CARGO BAY ---------- */
+const isItem = (k) => ITEMS.some((i) => i.key === k);
+const nameOf = (k) =>
+  (
+    UPGRADES.find((u) => u.key === k) ||
+    ITEMS.find((i) => i.key === k) || { name: k }
+  ).name;
+const isPackable = (k) =>
+  isItem(k)
+    ? !!save.items[k]
+    : UPGRADES.some((u) => u.key === k) && owned(k) > 0;
+// Removes anything invalid from the cargo list and returns how many slots there are
+function cleanCargo() {
+  const n = cargoSlots(save.level);
+  save.cargo = [...new Set(save.cargo)].filter(isPackable).slice(0, n);
+  return n;
+}
+function autoPack(k) {
+  const n = cleanCargo();
+  if (!save.cargo.includes(k) && save.cargo.length < n) save.cargo.push(k);
+}
+function togglePack(k) {
+  const n = cleanCargo();
+  const i = save.cargo.indexOf(k);
+  if (i >= 0) save.cargo.splice(i, 1);
+  else if (save.cargo.length < n) save.cargo.push(k);
+  persist();
+  showMenu(true);
+}
+
 function newGame() {
+  const tier = tierInfo(save.level);
+  const days = tier.days;
+  cleanCargo();
+  const cargo = [...save.cargo];
+  const L = (k) => (cargo.includes(k) ? owned(k) : 0);
+
+  // One-mission items are used up now
+  ITEMS.forEach((it) => {
+    if (cargo.includes(it.key)) save.items[it.key] = 0;
+  });
+  save.cargo = cargo.filter((k) => !isItem(k));
+  persist();
+
   // Schedule random events, never on day 1 and never back-to-back
-  const events = Array(CONFIG.totalSols + 2).fill(null);
-  const pick = () => {
-    let s;
-    do {
-      s = 2 + Math.floor(Math.random() * (CONFIG.totalSols - 2));
-    } while (events[s] || events[s - 1] || events[s + 1]);
-    return s;
+  const events = Array(days + 2).fill(null);
+  const place = (ev) => {
+    const free = [];
+    for (let s = 2; s <= days - 1; s++)
+      if (!events[s] && !events[s - 1] && !events[s + 1]) free.push(s);
+    if (free.length) events[free[Math.floor(Math.random() * free.length)]] = ev;
   };
   const stormOrder = STORMS.map((_, i) => i).sort(() => Math.random() - 0.5);
-  for (let i = 0; i < CONFIG.stormCount; i++)
-    events[pick()] = {
-      type: "storm",
-      data: STORMS[stormOrder[i % STORMS.length]],
-    };
-  for (let i = 0; i < CONFIG.dustCount; i++)
-    events[pick()] = { type: "dust", data: DUST };
+  for (let i = 0; i < tier.storms; i++)
+    place({ type: "storm", data: STORMS[stormOrder[i % STORMS.length]] });
+  for (let i = 0; i < tier.dusts; i++) place({ type: "dust", data: DUST });
 
   // Schedule surprise emergencies on random days (never day 1)
   const emergencies = {};
   const order = EMERGENCIES.map((_, i) => i).sort(() => Math.random() - 0.5);
   let n = 0;
-  while (Object.keys(emergencies).length < CONFIG.emergencyCount) {
-    const d = 2 + Math.floor(Math.random() * (CONFIG.totalSols - 1));
+  while (Object.keys(emergencies).length < tier.emergencies) {
+    const d = 2 + Math.floor(Math.random() * (days - 1));
     if (!emergencies[d])
       emergencies[d] = EMERGENCIES[order[n++ % EMERGENCIES.length]];
   }
 
   game = {
+    level: tier.level,
+    tier,
+    total: days,
+    cargo,
     sol: 1,
-    air: CONFIG.startAir + 2 * lv("tanks"),
-    food: CONFIG.startFood + 2 * lv("tanks"),
-    maxStock: CONFIG.maxStock + 2 * lv("tanks"),
+    air: CONFIG.startAir + 2 * L("tanks"),
+    food: CONFIG.startFood + 2 * L("tanks"),
+    maxStock: CONFIG.maxStock + 2 * L("tanks"),
     bonus: {},
     quizOrder: QUIZ.map((_, i) => i).sort(() => Math.random() - 0.5),
     quizOpts: {},
     quizRes: {},
-    battery: take("battery"),
-    warning: take("warning"),
+    battery: cargo.includes("battery") ? 1 : 0,
+    warning: cargo.includes("warning"),
     dose: 0,
     science: 0,
-    alloc: { L: 2, G: 1, S: 0, R: 0 },
+    alloc: { L: 3, G: 1, S: 0, R: 0 },
     events,
     emergencies,
     penalty: {},
@@ -480,12 +557,18 @@ const todayEvent = () => game.events[game.sol];
 const power = () =>
   Math.max(
     2,
-    (todayEvent()?.type === "dust" ? CONFIG.dustPower : CONFIG.normalPower) +
+    (todayEvent()?.type === "dust" ? game.tier.dust : CONFIG.normalPower) +
       lv("panels") +
       (game.bonus[game.sol] || 0) -
       (game.penalty[game.sol] || 0),
   );
 const used = () => Object.values(game.alloc).reduce((a, b) => a + b, 0);
+
+// Radiation that gets through in a storm, and how much shelter power blocks all of it
+const stormHit = (shelter) =>
+  Math.max(0, game.tier.storm - lv("walls") - 2 * shelter);
+const shelterNeed = () =>
+  Math.min(4, Math.ceil(Math.max(0, game.tier.storm - lv("walls")) / 2));
 
 function change(key, delta) {
   const next = game.alloc[key] + delta;
@@ -500,10 +583,10 @@ function finishDay(prenotes = []) {
     ev = todayEvent(),
     notes = [...prenotes];
 
-  // Air: crew uses 4 a day. Life support adds 2 per unit, greenhouse adds 1 per unit.
-  const airChange = -4 + 2 * a.L + a.G;
-  // Food: crew eats 2 a day. Greenhouse grows 2 per unit.
-  const foodChange = -2 + (2 + lv("seeds")) * a.G;
+  // Air: crew uses some each day. Life support adds 2 per unit, greenhouse adds 1 per unit.
+  const airChange = -CONFIG.crewAir + 2 * a.L + a.G;
+  // Food: crew eats some each day. Greenhouse grows 2 per unit.
+  const foodChange = -CONFIG.crewFood + (2 + lv("seeds")) * a.G;
   game.air = Math.min(game.maxStock, game.air + airChange);
   game.food = Math.min(game.maxStock, game.food + foodChange);
   if (airChange < 0) notes.push("The air tank went down.");
@@ -512,7 +595,7 @@ function finishDay(prenotes = []) {
   // Radiation: a little each day with no shelter. A storm adds a lot unless the shelter is powered.
   let dose = a.S === 0 ? 0.25 : 0;
   if (ev?.type === "storm") {
-    const hit = Math.max(0, 5 - lv("walls") - 2 * a.S);
+    const hit = stormHit(a.S);
     dose += hit;
     notes.push(
       hit > 0
@@ -529,7 +612,7 @@ function finishDay(prenotes = []) {
   if (game.air <= 0) game.result = "air";
   else if (game.food <= 0) game.result = "food";
   else if (game.dose >= CONFIG.doseLimit) game.result = "dose";
-  else if (game.sol >= CONFIG.totalSols) game.result = "win";
+  else if (game.sol >= game.total) game.result = "win";
   else {
     game.sol++;
     // If tomorrow has less power, trim the plan so it still fits
@@ -561,7 +644,7 @@ function popup(html) {
 }
 
 function showEmergency(em) {
-  const total = CONFIG.emergencyTime + 4 * lv("drills");
+  const total = game.tier.time + 4 * lv("drills");
   let left = total;
   const opts = [...em.choices].sort(() => Math.random() - 0.5); // shuffle so the best one moves around
   const box = popup(`
@@ -628,17 +711,21 @@ function applyEmergency(choice, timedOut) {
 }
 
 /* ---------- MAIN MENU + HOW TO PLAY ---------- */
+const fmt = (n) => (Number.isInteger(n) ? n : n.toFixed(1));
+const starsStr = (n) => "★".repeat(n) + "☆".repeat(3 - n);
+
 function showMain() {
   game = null;
   app.className = "";
+  const tr = tierInfo(save.level);
   app.innerHTML = `
     <div class="hero">
       <svg class="logo" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#c4553b" stroke="#1e1a3c" stroke-width="4"/><ellipse cx="32" cy="34" rx="30" ry="9" fill="none" stroke="#ffc933" stroke-width="4" transform="rotate(-20 32 34)"/><circle cx="24" cy="26" r="4" fill="#8e3a3a"/><circle cx="38" cy="40" r="3" fill="#8e3a3a"/></svg>
       <h1>Mars Outpost</h1>
-      <p class="sub">Can you keep your crew alive for ${CONFIG.totalSols} days?</p>
+      <p class="sub">Mission ${tr.level + 1}: keep your crew alive for ${tr.days} days.</p>
     </div>
-    <button class="go" onclick="startMission()">▶ Play</button>
-    <button class="go alt" onclick="showMenu()">Upgrades <span class="pill">${save.points}</span></button>
+    <button class="go" onclick="startMission()">▶ Play Mission ${tr.level + 1}</button>
+    <button class="go alt" onclick="showMenu()">Cargo &amp; upgrades <span class="pill">${save.points}</span></button>
     <button class="go alt" onclick="showHow()">How to play</button>`;
   window.scrollTo(0, 0);
 }
@@ -653,8 +740,9 @@ function showHow() {
       <p><b>Radiation storms</b>: power the shelter when the forecast warns you.</p>
       <p><b>Dust storms</b>: less sunlight means less power.</p>
       <p><b>Emergencies</b>: pick fast before the timer runs out!</p></div>
-    <div class="card"><h2>After the mission</h2>
-      <p>Research points you earn can buy upgrades for your next mission.</p></div>
+    <div class="card"><h2>Missions and cargo</h2>
+      <p>Mission 1 lasts ${CONFIG.daysPerStep} days. Clear it to unlock a longer, harder mission. If you do not make it, you try the same mission again.</p>
+      <p>Research points buy upgrades. A rocket can only carry a few, so you choose which ones to pack. Real missions have weight limits too!</p></div>
     <div class="card"><h2>Real NASA science</h2>
       <p class="fact">The storms and dust storms are based on real, archived NASA records: DONKI space weather (May 2024 and Oct 2003 storms), the 1972 Apollo-era flare, and the 2018 Mars dust storm that stopped the Opportunity rover. They are not live data. Game numbers are simplified for play.</p></div>
     <button class="go" onclick="showMain()">◀ Back</button>`;
@@ -663,8 +751,24 @@ function showHow() {
 
 /* ---------- RESEARCH POINTS + UPGRADE MENU ---------- */
 function award() {
-  game.earned = game.science + (game.result === "win" ? 10 : 0); // +10 bonus for surviving
+  const win = game.result === "win";
+  game.goal = CONFIG.starScience * game.total;
+  game.okDose = game.dose <= CONFIG.doseLimit * 0.3;
+  game.okSci = game.science >= game.goal;
+  game.stars = win ? 1 + (game.okDose ? 1 : 0) + (game.okSci ? 1 : 0) : 0;
+  // +10 for surviving, +3 for each extra star
+  game.earned = game.science + (win ? 10 + 3 * (game.stars - 1) : 0);
   save.points += game.earned;
+
+  game.unlocked = false;
+  if (win) {
+    save.stars[game.level] = Math.max(save.stars[game.level] || 0, game.stars);
+    // Clearing your current mission unlocks the next one. Losing changes nothing.
+    if (game.level === save.level && save.level < CONFIG.maxLevel) {
+      save.level++;
+      game.unlocked = true;
+    }
+  }
   persist();
 }
 function quitMission() {
@@ -684,63 +788,96 @@ function startMission() {
 }
 function buyUpgrade(k) {
   const u = UPGRADES.find((x) => x.key === k),
-    cost = u.costs[lv(k)];
+    cost = u.costs[owned(k)];
   if (cost === undefined || save.points < cost) return;
   save.points -= cost;
-  save.up[k] = lv(k) + 1;
+  save.up[k] = owned(k) + 1;
+  autoPack(k);
   persist();
-  showMenu();
+  showMenu(true);
 }
 function buyItem(k) {
   const it = ITEMS.find((x) => x.key === k);
   if (save.items[k] || save.points < it.cost) return;
   save.points -= it.cost;
   save.items[k] = 1;
+  autoPack(k);
   persist();
-  showMenu();
+  showMenu(true);
 }
 function resetSave() {
-  if (confirm("Erase all points and upgrades?")) {
-    save = { points: 0, up: {}, items: {} };
+  if (confirm("Erase all points, upgrades and mission progress?")) {
+    save = freshSave();
     persist();
     showMenu();
   }
 }
 
-function showMenu() {
+function showMenu(keepScroll) {
   game = null;
   app.className = "";
+  const slots = cleanCargo();
+  const tr = tierInfo(save.level);
+  const best = save.stars[save.level] || 0;
+  const full = save.cargo.length >= slots;
+
+  const packBtn = (k) => {
+    const on = save.cargo.includes(k);
+    return `<button class="pack ${on ? "on" : ""}" onclick="togglePack('${k}')" ${!on && full ? "disabled" : ""}>${on ? "Packed ✓" : "Pack"}</button>`;
+  };
+
+  const bay = Array.from({ length: slots }, (_, i) => {
+    const k = save.cargo[i];
+    return k
+      ? `<span class="full">${ic(k)}<small>${nameOf(k)}</small></span>`
+      : `<span><small>Empty slot</small></span>`;
+  }).join("");
+
   const ups = UPGRADES.map((u) => {
-    const L = lv(u.key),
+    const L = owned(u.key),
       cost = u.costs[L],
       maxed = cost === undefined;
     return `<div class="system"><div class="icon">${ic(u.key)}</div>
       <div class="info"><b>${u.name}</b><small>${u.desc}</small><span class="pips">${"●".repeat(L)}${"○".repeat(u.costs.length - L)}</span></div>
-      <button class="buy" onclick="buyUpgrade('${u.key}')" ${maxed || save.points < cost ? "disabled" : ""}>${maxed ? "Maxed" : "" + cost}</button></div>`;
+      <div class="btns">
+        <button class="buy" onclick="buyUpgrade('${u.key}')" ${maxed || save.points < cost ? "disabled" : ""}>${maxed ? "Maxed" : (L ? "Level up · " : "Buy · ") + cost}</button>
+        ${L ? packBtn(u.key) : ""}
+      </div></div>`;
   }).join("");
-  const items = ITEMS.map(
-    (it) => `<div class="system"><div class="icon">${ic(it.key)}</div>
+
+  const items = ITEMS.map((it) => {
+    const have = !!save.items[it.key];
+    return `<div class="system"><div class="icon">${ic(it.key)}</div>
       <div class="info"><b>${it.name}</b><small>${it.desc}</small></div>
-      <button class="buy" onclick="buyItem('${it.key}')" ${save.items[it.key] || save.points < it.cost ? "disabled" : ""}>${save.items[it.key] ? "Packed " : "" + it.cost}</button></div>`,
-  ).join("");
+      <div class="btns">
+        <button class="buy" onclick="buyItem('${it.key}')" ${have || save.points < it.cost ? "disabled" : ""}>${have ? "Bought" : "Buy · " + it.cost}</button>
+        ${have ? packBtn(it.key) : ""}
+      </div></div>`;
+  }).join("");
+
+  const lastTier = save.level >= CONFIG.maxLevel;
   app.innerHTML = `
     <h1>Mars Outpost</h1>
-    <p class="sub">Get your crew through ${CONFIG.totalSols} days. Spend research points to make the next mission safer.</p>
+    <div class="card"><h2>Mission ${tr.level + 1}: ${tr.days} days</h2>
+      <p class="fact">Rank: ${tr.rank}. ${best ? `Best so far: <span class="stars">${starsStr(best)}</span>. ` : ""}${lastTier ? "This is the final mission. Replay it to earn more stars." : `Clear it to unlock Mission ${tr.level + 2} (${missionDays(save.level + 1)} days). If you do not make it, you try this one again.`}</p></div>
+    <div class="card"><h2>Cargo bay: ${save.cargo.length} of ${slots} packed</h2>
+      <div class="bay">${bay}</div>
+      <p class="fact">The rocket can only carry ${slots} things. Pick what your crew needs most. Real rockets have weight limits too!</p></div>
     <div class="card"><h2>${save.points} research points</h2>
-      <p class="fact">Earn points from the science lab each mission, plus 10 for surviving.</p></div>
-    <div class="card"><h2>Upgrades</h2><p class="fact">These stay forever.</p>${ups}</div>
-    <div class="card"><h2>Pack for next mission</h2><p class="fact">These are used up on your next mission.</p>${items}</div>
-    <button class="go" onclick="startMission()">Start mission ▶</button>
+      <p class="fact">Earn points from science each mission, plus a bonus for surviving and for stars.</p></div>
+    <div class="card"><h2>Upgrades</h2><p class="fact">You keep these forever, but you must pack them to use them.</p>${ups}</div>
+    <div class="card"><h2>One-mission items</h2><p class="fact">Packed items are used up when the mission starts.</p>${items}</div>
+    <button class="go" onclick="startMission()">Start Mission ${tr.level + 1} ▶</button>
     <button class="go alt" onclick="showMain()">◀ Main menu</button>
     <p class="fact" style="text-align:center"><a href="#" onclick="resetSave();return false" style="color:inherit">Reset progress</a></p>`;
-  window.scrollTo(0, 0);
+  if (!keepScroll) window.scrollTo(0, 0);
 }
 
 /* ---------- ACTIVITIES: forecast, Earth quiz, rover mini-game ---------- */
 function forecastStrip() {
   const look = game.warning ? 4 : 2; // days you can see (the satellite shows more)
   let tiles = "";
-  for (let d = game.sol; d < game.sol + 4 && d <= CONFIG.totalSols; d++) {
+  for (let d = game.sol; d < game.sol + 4 && d <= game.total; d++) {
     const known = d - game.sol < look,
       e = game.events[d];
     const icon = !known
@@ -759,12 +896,12 @@ function forecastStrip() {
   }
   const nx = game.events[game.sol + 1];
   const advice =
-    game.sol >= CONFIG.totalSols
+    game.sol >= game.total
       ? ""
       : nx
         ? nx.type === "storm"
-          ? `<div class="advice storm"><b>Storm tomorrow.</b> Put 3 power in the shelter then.</div>`
-          : `<div class="advice dust"><b>Dust tomorrow.</b> Only ${CONFIG.dustPower + lv("panels")} power. Stock up on air and food.</div>`
+          ? `<div class="advice storm"><b>Storm tomorrow.</b> Put ${shelterNeed()} power in the shelter then.</div>`
+          : `<div class="advice dust"><b>Dust tomorrow.</b> Only ${Math.max(2, game.tier.dust + lv("panels"))} power. Stock up on air and food.</div>`
         : `<div class="advice calm">Tomorrow looks calm. Good time for science.</div>`;
   return `<div class="card"><h2>Forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
 }
@@ -810,7 +947,7 @@ function startRover() {
   const sp = setInterval(() => {
     const r = document.createElement("button");
     r.className = "rock";
-    r.textContent = "";
+    r.textContent = "🪨";
     r.style.left = Math.random() * 80 + "%";
     r.style.top = Math.random() * 75 + "%";
     r.onclick = () => {
@@ -859,42 +996,34 @@ const NEWS = [
 const MESSAGES = [
   {
     from: "Mission Control",
-    icon: "",
     text: "Good morning, crew! Check the forecast before you share out power.",
   },
   {
     from: "Dr. Rivera, solar scientist",
-    icon: "",
     text: "We watch the Sun every day. Flares can reach Mars fast, so shelter early.",
   },
   {
     from: "Your family",
-    icon: "",
     text: "We looked up at Mars tonight. It was a tiny red dot. We are so proud of you!",
   },
   {
     from: "Class 5, Earth School",
-    icon: "",
     text: "We are growing beans in class, just like your greenhouse!",
   },
   {
     from: "Engineer Sam",
-    icon: "",
     text: "Tip: spare parts and a calm plan fix most problems.",
   },
   {
     from: "Mission Control",
-    icon: "",
     text: "Remember: radiation dose never goes down. Shelter is cheaper than going home.",
   },
   {
     from: "Chef Amara",
-    icon: "",
     text: "One greenhouse unit feeds the crew for a day. Plants make a little air too!",
   },
   {
     from: "Mission Control",
-    icon: "",
     text: "Our messages take minutes to reach you. You are the experts on the ground.",
   },
 ];
@@ -903,7 +1032,7 @@ const MESSAGES = [
 function todaysMessages() {
   const ev = todayEvent(),
     nx = game.events[game.sol + 1],
-    MC = { from: "Mission Control", icon: "" };
+    MC = { from: "Mission Control" };
   let hot = null;
   if (ev?.type === "storm")
     hot = {
@@ -967,8 +1096,12 @@ function projection() {
   const a = game.alloc,
     ev = todayEvent();
   let dose = a.S ? 0 : 0.25;
-  if (ev?.type === "storm") dose += Math.max(0, 5 - lv("walls") - 2 * a.S);
-  return { air: -4 + 2 * a.L + a.G, food: -2 + (2 + lv("seeds")) * a.G, dose };
+  if (ev?.type === "storm") dose += stormHit(a.S);
+  return {
+    air: -CONFIG.crewAir + 2 * a.L + a.G,
+    food: -CONFIG.crewFood + (2 + lv("seeds")) * a.G,
+    dose,
+  };
 }
 // Little picture of the base. Lights turn on when you give a building power.
 function scene() {
@@ -997,11 +1130,10 @@ function scene() {
 /* ---------- DRAWING THE SCREEN ---------- */
 function meter(icon, label, value, max, lowWhen) {
   const low = lowWhen(value);
-  const shown = Number.isInteger(value) ? value : value.toFixed(1);
   return `<div class="meter ${low ? "low" : ""}">
     <div class="icon">${ic(icon)}</div>
     <div class="bar"><i style="width:${Math.max(0, (value / max) * 100)}%"></i></div>
-    <div class="label">${label} ${shown}/${max}</div></div>`;
+    <div class="label">${label} ${fmt(value)}/${max}</div></div>`;
 }
 
 function render() {
@@ -1011,10 +1143,12 @@ function render() {
 
   // Today's event (short, with the NASA fact tucked away)
   let eventCard = "";
-  if (ev?.type === "storm")
+  if (ev?.type === "storm") {
+    const need = shelterNeed();
     eventCard = `<div class="card warn"><h2>${ic("dose")} Radiation storm today</h2>
-      <p>Power the shelter. 3 units blocks nearly all radiation.</p>
+      <p>Put <b>${need}</b> power in the shelter to block it all.</p>
       ${more("fact", "Real NASA fact", `<p class="fact"><b>${ev.data.title}.</b> ${ev.data.fact}</p>`)}</div>`;
+  }
   if (ev?.type === "dust")
     eventCard = `<div class="card warn"><h2>${ic("dust")} ${ev.data.title}</h2>
       <p>Power drops to <b>${p} units</b> today.</p>
@@ -1045,14 +1179,15 @@ function render() {
     </div>`,
   ).join("");
 
-  // The hints live here now, so the tiles stay small
+  // The hints live here, so the tiles stay small
   const help = more(
     "sys",
     "What does each system do?",
     SYSTEMS.map((s) => `<p class="fact"><b>${s.name}:</b> ${s.hint}</p>`).join(
       "",
     ) +
-      `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>`,
+      `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>` +
+      `<p class="fact"><b>Cargo on this mission:</b> ${game.cargo.map(nameOf).join(", ") || "nothing packed"}.</p>`,
   );
 
   // How many bonus activities are still open today (shown as a small number)
@@ -1063,16 +1198,16 @@ function render() {
   app.innerHTML = `<div class="layout">
     <div class="topbar">
       <button class="back" onclick="quitMission()">◀ Menu</button>
-      <span class="brand">Mars Outpost</span>
+      <span class="brand">Mission ${game.level + 1} · ${game.total} days</span>
     </div>
 
     <div class="col">
       <div class="card hud">
         <div class="hudrow">
-          <span class="big">Day ${game.sol}<small> / ${CONFIG.totalSols}</small></span>
+          <span class="big">Day ${game.sol}<small> / ${game.total}</small></span>
           <span>${ic("R")} ${game.science} pts</span>
         </div>
-        <div class="progress"><i style="width:${(game.sol / CONFIG.totalSols) * 100}%"></i></div>
+        <div class="progress"><i style="width:${(game.sol / game.total) * 100}%"></i></div>
         <div class="meters">
           ${meter("L", "Air", game.air, game.maxStock, (v) => v <= 3)}
           ${meter("food", "Food", game.food, game.maxStock, (v) => v <= 3)}
@@ -1103,24 +1238,50 @@ function render() {
 
 function renderEnd() {
   app.className = "";
+  const win = game.result === "win";
+  const nxt = tierInfo(save.level);
   const msg = {
-    win: `You made it! ${game.science} research points.`,
+    win: `Mission ${game.level + 1} cleared! ${game.science} research points.`,
     air: "The air ran out.",
     food: "The food ran out.",
     dose: "The crew reached the radiation limit and had to go home.",
   }[game.result];
+  const chk = (ok, text) =>
+    `<p class="chk ${ok ? "ok" : "no"}">${ok ? "✔" : "✖"} ${text}</p>`;
+
+  let result;
+  if (win) {
+    const nextLine = game.unlocked
+      ? `Unlocked: <b>Mission ${nxt.level + 1}</b>, ${nxt.days} days. It will be harder!`
+      : save.level >= CONFIG.maxLevel
+        ? "That was the final mission tier. Replay it to earn more stars."
+        : "Replaying an old mission. Your next mission is still waiting.";
+    result = `<div class="card news"><h2>Stars: <span class="stars">${starsStr(game.stars)}</span></h2>
+      ${chk(true, `Survived all ${game.total} days`)}
+      ${chk(game.okDose, `Radiation under ${fmt(CONFIG.doseLimit * 0.3)} (you had ${fmt(game.dose)})`)}
+      ${chk(game.okSci, `${game.goal}+ research points (you had ${game.science})`)}
+      <p>You earned <b>${game.earned}</b> points and now have <b>${save.points}</b> to spend.</p>
+      <p>${nextLine}</p></div>`;
+  } else {
+    result = `<div class="card news"><h2>You earned ${game.earned} research points</h2>
+      <p>You now have <b>${save.points}</b> to spend.</p>
+      <p>You stay on <b>Mission ${nxt.level + 1}</b> (${nxt.days} days) until you clear it. Try packing different cargo!</p></div>`;
+  }
+
   app.innerHTML = `
     <h1>${msg}</h1>
-    <div class="card"><h2>What you learned</h2>
-      <p><b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
+    ${result}
+    ${fold(
+      "learn",
+      "What you learned",
+      `<p><b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
       <p><b>Space weather matters.</b> Mission planners watch NASA’s DONKI database for flares, then decide when to shelter.</p>
       <p><b>Mars can surprise you.</b> Dust storms cut solar power, like the one in 2018 that stopped the Opportunity rover.</p>
       <p><b>Help is far away.</b> Signals between Earth and Mars take 3 to 22 minutes, so crews decide on their own.</p>
-    </div>
-    <div class="card news"><h2>You earned ${game.earned} research points!</h2>
-      <p>${game.science} from science${game.result === "win" ? " + 10 for surviving" : ""}. You now have <b>${save.points}</b> to spend.</p></div>
-    <button class="go" onclick="showMenu()">Upgrade menu </button>
-    <button class="go alt" onclick="startMission()">Play again now</button>
+      <p><b>Cargo is limited.</b> A rocket can only carry so much, so crews choose what to bring.</p>`,
+    )}
+    <button class="go" onclick="showMenu()">Cargo &amp; upgrades</button>
+    <button class="go alt" onclick="startMission()">${win ? "Start Mission " + (nxt.level + 1) + " now" : "Try again now"}</button>
     <button class="go alt" onclick="showMain()">◀ Main menu</button>`;
 }
 
