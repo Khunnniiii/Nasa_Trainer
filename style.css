@@ -949,3 +949,51 @@ button.pack.on {
     transition: none !important;
   }
 }
+
+/* Day report + debrief */
+.rep,
+.debrief {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  text-align: left;
+}
+.rep li,
+.debrief li {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  border-left: 5px solid #888;
+  background: rgba(128, 128, 128, 0.12);
+  font-size: 0.95rem;
+}
+.rep li.good,
+.debrief li.good {
+  border-left-color: #35d8a0;
+}
+.rep li.bad,
+.debrief li.bad {
+  border-left-color: #ff5a6e;
+}
+.rep li.warn {
+  border-left-color: #ffc933;
+}
+.overlay .alert {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Overheat warning on a system tile */
+.hotnote {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #ffc933;
+}
+
+/* Run Day locked until all power is assigned */
+button.go:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

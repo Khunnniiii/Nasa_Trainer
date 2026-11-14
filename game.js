@@ -23,6 +23,16 @@ const CONFIG = {
   dustRate: 0.12,
   emergencyRate: 0.15,
   rateGrowth: 0.01, // how much those rates grow per mission level
+
+  // Consequences
+  stormThreatBoost: 1.5, // storm "risk days" per real storm (not every risk day becomes a storm)
+  strainDays: 2, // days in a row at full power before a system overheats
+  strainPenalty: 2, // power lost the day after an overheat
+  tiredPenalty: 1, // power lost the day after the crew runs low on air or food
+  lowStock: 2, // air or food at or below this makes the crew tired
+  discoveryEvery: 6, // research points per discovery
+  maxDiscoveries: 2, // each discovery gives +1 power for the rest of the mission
+  riskWarnPct: 50, // ask "run anyway?" if a storm is at least this likely and shelter is too low
 };
 
 const RANKS = ["Rookie", "Cadet", "Pilot", "Commander", "Captain", "Legend"];
@@ -446,7 +456,7 @@ const ITEMS = [
   {
     key: "warning",
     name: "Early-warning satellite",
-    desc: "One mission only: see storms 4 days ahead.",
+    desc: "One mission only: see storms 4 days ahead, and forecasts become much more accurate.",
     cost: 6,
   },
   {
@@ -487,6 +497,8 @@ function togglePack(k) {
   showMenu(true);
 }
 
+const emptyPlan = () => ({ L: 0, G: 0, S: 0, R: 0 });
+
 function newGame() {
   const tier = tierInfo(save.level);
   const days = tier.days;
@@ -501,7 +513,9 @@ function newGame() {
   save.cargo = cargo.filter((k) => !isItem(k));
   persist();
 
-  // Schedule random events, never on day 1 and never back-to-back
+  // Schedule "risk days". Each has a chance (40-90%) and the result is rolled now,
+  // so a "70%" forecast really does come true about 7 times out of 10.
+  // Never on day 1 and never back-to-back.
   const events = Array(days + 2).fill(null);
   const place = (ev) => {
     const free = [];
@@ -509,10 +523,15 @@ function newGame() {
       if (!events[s] && !events[s - 1] && !events[s + 1]) free.push(s);
     if (free.length) events[free[Math.floor(Math.random() * free.length)]] = ev;
   };
+  const risk = (type, data) => {
+    const pct = 40 + 10 * Math.floor(Math.random() * 6); // 40..90
+    return { type, data, chance: pct, happens: Math.random() < pct / 100 };
+  };
   const stormOrder = STORMS.map((_, i) => i).sort(() => Math.random() - 0.5);
-  for (let i = 0; i < tier.storms; i++)
-    place({ type: "storm", data: STORMS[stormOrder[i % STORMS.length]] });
-  for (let i = 0; i < tier.dusts; i++) place({ type: "dust", data: DUST });
+  const stormRisks = Math.round(tier.storms * CONFIG.stormThreatBoost);
+  for (let i = 0; i < stormRisks; i++)
+    place(risk("storm", STORMS[stormOrder[i % STORMS.length]]));
+  for (let i = 0; i < tier.dusts; i++) place(risk("dust", DUST));
 
   // Schedule surprise emergencies on random days (never day 1)
   const emergencies = {};
@@ -541,28 +560,59 @@ function newGame() {
     warning: cargo.includes("warning"),
     dose: 0,
     science: 0,
-    alloc: { L: 3, G: 1, S: 0, R: 0 },
+    alloc: emptyPlan(), // starts empty every day: no autopilot!
     events,
     emergencies,
-    penalty: {},
+    penalty: {}, // power lost on a given day
+    penaltyWhy: {}, // the reasons, so the player learns the cause
+    strain: emptyPlan(), // days in a row each system ran at full power
+    discoveries: 0,
+    log: [], // good and bad moments for the end-of-mission debrief
     ui: {}, // which collapsible sections are open
-    report: "",
     result: null,
   };
   render();
 }
 
 /* ---------- RULES ---------- */
-const todayEvent = () => game.events[game.sol];
+const threat = (d) => game.events[d] || null; // a risk day (may or may not happen)
+const todayEvent = () => {
+  const e = game.events[game.sol];
+  return e && e.happens ? e : null; // only things that REALLY happen today
+};
 const power = () =>
   Math.max(
     2,
     (todayEvent()?.type === "dust" ? game.tier.dust : CONFIG.normalPower) +
       lv("panels") +
+      game.discoveries +
       (game.bonus[game.sol] || 0) -
       (game.penalty[game.sol] || 0),
   );
 const used = () => Object.values(game.alloc).reduce((a, b) => a + b, 0);
+
+// What the player is TOLD about a risk day (percent). Dust shows up on the panels at the
+// start of the day, so it is known on the day. Radiation is never known until it hits.
+function shownChance(d) {
+  const e = game.events[d];
+  if (!e) return 0;
+  if (e.type === "dust" && d === game.sol) return e.happens ? 100 : 0;
+  if (game.warning) return e.happens ? 90 : 10; // the satellite makes forecasts sharper
+  return e.chance;
+}
+const odds = (p) =>
+  p >= 70
+    ? "very likely"
+    : p >= 50
+      ? "likely"
+      : p >= 30
+        ? "possible"
+        : "unlikely";
+
+function addPenalty(day, n, why) {
+  game.penalty[day] = (game.penalty[day] || 0) + n;
+  (game.penaltyWhy[day] = game.penaltyWhy[day] || []).push(why);
+}
 
 // Radiation that gets through in a storm, and how much shelter power blocks all of it
 const stormHit = (shelter) =>
@@ -578,35 +628,154 @@ function change(key, delta) {
   render();
 }
 
+// Called when the player presses Run Day. Asks first if the plan is risky.
+function runSol() {
+  if (used() < power()) return; // all power must be assigned
+  const t = threat(game.sol),
+    need = shelterNeed(),
+    pct = shownChance(game.sol);
+  if (t?.type === "storm" && pct >= CONFIG.riskWarnPct && game.alloc.S < need) {
+    const box = popup(`<h2>Risky plan</h2>
+      <p>A storm is <b>${pct}%</b> likely today. Blocking all of it needs <b>${need}</b> shelter power and you set <b>${game.alloc.S}</b>.</p>
+      <button class="go" id="back">Change my plan</button>
+      <button class="go alt" id="yes">Run anyway</button>`);
+    box.querySelector("#back").onclick = () => box.remove();
+    box.querySelector("#yes").onclick = () => {
+      box.remove();
+      startDay();
+    };
+    return;
+  }
+  startDay();
+}
+function startDay() {
+  const em = game.emergencies[game.sol];
+  if (em) showEmergency(em);
+  else finishDay();
+}
+
 function finishDay(prenotes = []) {
   const a = game.alloc,
-    ev = todayEvent(),
-    notes = [...prenotes];
+    today = game.sol,
+    thr = threat(today),
+    seen = thr ? shownChance(today) : 0;
+  const notes = [...prenotes];
+  const before = {
+    air: game.air,
+    food: game.food,
+    dose: game.dose,
+    science: game.science,
+  };
+  // "warn" notes are shown but not saved for the debrief
+  const note = (tone, text) => {
+    notes.push({ tone, text });
+    if (tone !== "warn") game.log.push({ day: today, tone, text });
+  };
 
   // Air: crew uses some each day. Life support adds 2 per unit, greenhouse adds 1 per unit.
-  const airChange = -CONFIG.crewAir + 2 * a.L + a.G;
   // Food: crew eats some each day. Greenhouse grows 2 per unit.
-  const foodChange = -CONFIG.crewFood + (2 + lv("seeds")) * a.G;
-  game.air = Math.min(game.maxStock, game.air + airChange);
-  game.food = Math.min(game.maxStock, game.food + foodChange);
-  if (airChange < 0) notes.push("The air tank went down.");
-  if (foodChange < 0) notes.push("The crew ate stored food.");
+  game.air = Math.min(game.maxStock, game.air - CONFIG.crewAir + 2 * a.L + a.G);
+  game.food = Math.min(
+    game.maxStock,
+    game.food - CONFIG.crewFood + (2 + lv("seeds")) * a.G,
+  );
 
   // Radiation: a little each day with no shelter. A storm adds a lot unless the shelter is powered.
   let dose = a.S === 0 ? 0.25 : 0;
-  if (ev?.type === "storm") {
-    const hit = stormHit(a.S);
-    dose += hit;
-    notes.push(
-      hit > 0
-        ? `Radiation got through! Dose +${hit}.`
-        : "The shelter protected the crew!",
-    );
+  if (thr?.type === "storm") {
+    const need = shelterNeed();
+    if (thr.happens) {
+      const hit = stormHit(a.S);
+      dose += hit;
+      if (hit === 0)
+        note(
+          "good",
+          `A storm came (${seen}% likely) and your shelter blocked all of it. Protecting the crew paid off.`,
+        );
+      else if (a.S === 0)
+        note(
+          "bad",
+          `You skipped the shelter and the storm came (${seen}% likely). Radiation +${hit}, and it never goes away.`,
+        );
+      else
+        note(
+          "bad",
+          `The shelter blocked some, but radiation +${hit} got through. Blocking it all needed ${need} power.`,
+        );
+    } else if (a.S >= need) {
+      note(
+        "warn",
+        `The storm did not come (it was ${seen}% likely). The shelter power was not needed this time, but it was a safe bet.`,
+      );
+    } else if (a.S === 0) {
+      note(
+        "good",
+        `You gambled that the storm would not come (${seen}% likely) and you were right. That power went to something else.`,
+      );
+    } else {
+      note(
+        "warn",
+        "The storm did not come, so your half-protection used power for nothing. A gamble can go either way.",
+      );
+    }
   }
+  if (thr?.type === "dust")
+    note(
+      "warn",
+      thr.happens
+        ? "The dust storm cut your solar power today."
+        : "The dust cloud missed the base. Stocking up was not needed this time.",
+    );
   game.dose += dose;
   game.science += a.R;
-  if (a.R) notes.push(`+${a.R} research point${a.R > 1 ? "s" : ""}.`);
-  game.report = `<b>Day ${game.sol} report:</b> ${notes.join(" ") || "A calm day."}`;
+
+  // Discovery: research pays off later, so patience is rewarded
+  const dNow = Math.min(
+    CONFIG.maxDiscoveries,
+    Math.floor(game.science / CONFIG.discoveryEvery),
+  );
+  if (dNow > game.discoveries) {
+    game.discoveries = dNow;
+    note(
+      "good",
+      "Discovery! Your research found a better way to aim the solar panels. +1 power for the rest of the mission.",
+    );
+  }
+
+  // Strain: full power again and again overheats a system
+  for (const s of SYSTEMS) {
+    const k = s.key;
+    game.strain[k] = a[k] >= 4 ? game.strain[k] + 1 : 0;
+    if (game.strain[k] >= CONFIG.strainDays) {
+      game.strain[k] = 0;
+      addPenalty(
+        today + 1,
+        CONFIG.strainPenalty,
+        `${s.name.toLowerCase()} overheated`,
+      );
+      note(
+        "bad",
+        `${s.name} ran at full power ${CONFIG.strainDays} days in a row and overheated. Repairs cost ${CONFIG.strainPenalty} power tomorrow.`,
+      );
+    }
+  }
+
+  // Tired crew: low air or food drains tomorrow's power
+  if (
+    game.air > 0 &&
+    game.food > 0 &&
+    (game.air <= CONFIG.lowStock || game.food <= CONFIG.lowStock)
+  ) {
+    addPenalty(
+      today + 1,
+      CONFIG.tiredPenalty,
+      "the crew is tired from low air or food",
+    );
+    note(
+      "bad",
+      `The crew is low on ${game.air <= CONFIG.lowStock ? "air" : "food"} and tired. That means ${CONFIG.tiredPenalty} less power tomorrow.`,
+    );
+  }
 
   // Win or lose?
   if (game.air <= 0) game.result = "air";
@@ -615,25 +784,44 @@ function finishDay(prenotes = []) {
   else if (game.sol >= game.total) game.result = "win";
   else {
     game.sol++;
-    // If tomorrow has less power, trim the plan so it still fits
-    while (used() > power()) {
-      for (const k of ["R", "S", "G", "L"])
-        if (used() > power() && game.alloc[k] > 0) game.alloc[k]--;
-    }
+    game.alloc = emptyPlan(); // a new day, a new decision
   }
   if (game.result) award();
   render();
+  showReport(today, notes, before);
   window.scrollTo(0, 0);
 }
 
-/* ---------- EMERGENCY POP-UP WITH COUNTDOWN ---------- */
-// Called by the Run button. If an emergency is scheduled today, ask first.
-function runSol() {
-  const em = game.emergencies[game.sol];
-  if (em) showEmergency(em);
-  else finishDay();
+/* ---------- DAY REPORT (must be read before the next day) ---------- */
+function showReport(day, notes, before) {
+  const chip = (name, v, badWhenUp) => {
+    if (!v) return "";
+    const bad = badWhenUp ? v > 0 : v < 0;
+    return `<span class="chip ${bad ? "minus" : "plus"}">${name} ${v > 0 ? "+" : "−"}${fmt(Math.abs(v))}</span>`;
+  };
+  const chips =
+    chip("Air", game.air - before.air, false) +
+    chip("Food", game.food - before.food, false) +
+    chip("Radiation", game.dose - before.dose, true) +
+    chip("Research", game.science - before.science, false);
+  const rows = (
+    notes.length
+      ? notes
+      : [{ tone: "good", text: "A calm day. Nothing unexpected." }]
+  )
+    .map((n) => `<li class="${n.tone}">${n.text}</li>`)
+    .join("");
+  const box = popup(`<h2>Day ${day} report</h2>
+    <div class="chips">${chips}</div>
+    <ul class="rep">${rows}</ul>
+    <button class="go" id="cont">${game.result ? "See results ▶" : "Start Day " + game.sol + " ▶"}</button>`);
+  box.querySelector("#cont").onclick = () => {
+    box.remove();
+    window.scrollTo(0, 0);
+  };
 }
 
+/* ---------- EMERGENCY POP-UP WITH COUNTDOWN ---------- */
 function popup(html) {
   const box = document.createElement("div");
   box.className = "overlay";
@@ -659,7 +847,7 @@ function showEmergency(em) {
   const done = (choice, timedOut) => {
     clearInterval(timer);
     box.remove();
-    applyEmergency(choice, timedOut);
+    applyEmergency(em, choice, timedOut);
   };
   const timer = setInterval(() => {
     left--;
@@ -681,15 +869,20 @@ const CHIPS = {
 };
 const GRADES = { good: "Great choice!", ok: "Not bad", bad: "Risky choice" };
 
-function applyEmergency(choice, timedOut) {
+function applyEmergency(em, choice, timedOut) {
   const e = choice.effect;
   game.air = Math.max(0, Math.min(game.maxStock, game.air + (e.air || 0)));
   game.food = Math.max(0, Math.min(game.maxStock, game.food + (e.food || 0)));
   game.dose = Math.max(0, game.dose + (e.dose || 0));
   game.science = Math.max(0, game.science + (e.science || 0));
   if (e.powerNext)
-    game.penalty[game.sol + 1] =
-      (game.penalty[game.sol + 1] || 0) - e.powerNext;
+    addPenalty(
+      game.sol + 1,
+      -e.powerNext,
+      timedOut
+        ? "an emergency was not handled in time"
+        : "an emergency was handled badly",
+    );
 
   // Show the consequence, then play the day
   const chips = Object.keys(e)
@@ -699,6 +892,12 @@ function applyEmergency(choice, timedOut) {
     )
     .join("");
   const grade = timedOut ? "bad" : choice.grade;
+  const tone = grade === "good" ? "good" : grade === "ok" ? "warn" : "bad";
+  const text = timedOut
+    ? `${em.title} You did not decide in time. ${choice.result}`
+    : `${em.title} You chose "${choice.label}". ${choice.result}`;
+  if (tone !== "warn") game.log.push({ day: game.sol, tone, text });
+
   const box = popup(`
     <h2 class="g-${grade}">${timedOut ? "⏰ Time ran out!" : GRADES[grade]}</h2>
     <p>${choice.result}</p><div class="chips">${chips}</div>
@@ -706,7 +905,7 @@ function applyEmergency(choice, timedOut) {
     <button class="go" id="cont">Continue ▶</button>`);
   box.querySelector("#cont").onclick = () => {
     box.remove();
-    finishDay([`${timedOut ? "Time ran out! " : ""}${choice.result}`]);
+    finishDay([{ tone, text }]);
   };
 }
 
@@ -734,12 +933,17 @@ function showHow() {
   app.innerHTML = `
     <h1>How to play</h1>
     <div class="card"><h2>Your job</h2>
-      <p>Each day you get a few <b>power units</b>. Share them between life support, the greenhouse, the storm shelter and the science lab. Press <b>Run Day</b> to see what happens.</p>
-      <p>Power is never enough for everything, so every choice has a cost.</p></div>
+      <p>Each day you get a few <b>power units</b>. Share <b>all of them</b> between life support, the greenhouse, the storm shelter and the science lab. Press <b>Run Day</b> to see what happens.</p>
+      <p>Your plan starts empty every day, because every day is different. Power is never enough for everything, so every choice has a cost.</p></div>
     <div class="card"><h2>Watch out for</h2>
-      <p><b>Radiation storms</b>: power the shelter when the forecast warns you.</p>
+      <p><b>Radiation storms</b>: forecasts are never certain. 70% means a storm comes about 7 times out of 10. Protect the crew, or gamble and use the power elsewhere?</p>
       <p><b>Dust storms</b>: less sunlight means less power.</p>
       <p><b>Emergencies</b>: pick fast before the timer runs out!</p></div>
+    <div class="card"><h2>Choices have results</h2>
+      <p><b>Overheating:</b> a system at full power ${CONFIG.strainDays} days in a row breaks, and repairs cost power.</p>
+      <p><b>Tired crew:</b> low air or food means less power tomorrow.</p>
+      <p><b>Discoveries:</b> every ${CONFIG.discoveryEvery} research points gives +1 power for the rest of the mission.</p>
+      <p>After every day a report tells you what happened and why.</p></div>
     <div class="card"><h2>Missions and cargo</h2>
       <p>Mission 1 lasts ${CONFIG.daysPerStep} days. Clear it to unlock a longer, harder mission. If you do not make it, you try the same mission again.</p>
       <p>Research points buy upgrades. A rocket can only carry a few, so you choose which ones to pack. Real missions have weight limits too!</p></div>
@@ -879,31 +1083,33 @@ function forecastStrip() {
   let tiles = "";
   for (let d = game.sol; d < game.sol + 4 && d <= game.total; d++) {
     const known = d - game.sol < look,
-      e = game.events[d];
+      e = game.events[d],
+      pct = known ? shownChance(d) : 0;
+    const risky = known && e && pct > 0;
     const icon = !known
       ? "?"
-      : e
+      : risky
         ? ic(e.type === "storm" ? "dose" : "dust")
         : ic("sun");
     const name = !known
       ? "Unknown"
-      : e
-        ? e.type === "storm"
-          ? "Radiation"
-          : "Dust"
+      : risky
+        ? `${e.type === "storm" ? "Storm" : "Dust"} ${pct}%`
         : "Calm";
-    tiles += `<div class="ftile ${known && e ? e.type : ""} ${d === game.sol ? "now" : ""}"><small>${d === game.sol ? "Today" : "Day " + d}</small><span>${icon}</span><small>${name}</small></div>`;
+    tiles += `<div class="ftile ${risky ? e.type : ""} ${d === game.sol ? "now" : ""}"><small>${d === game.sol ? "Today" : "Day " + d}</small><span>${icon}</span><small>${name}</small></div>`;
   }
-  const nx = game.events[game.sol + 1];
+  const nx = game.events[game.sol + 1],
+    pct = nx ? shownChance(game.sol + 1) : 0;
   const advice =
     game.sol >= game.total
       ? ""
-      : nx
+      : nx && pct > 0
         ? nx.type === "storm"
-          ? `<div class="advice storm"><b>Storm tomorrow.</b> Put ${shelterNeed()} power in the shelter then.</div>`
-          : `<div class="advice dust"><b>Dust tomorrow.</b> Only ${Math.max(2, game.tier.dust + lv("panels"))} power. Stock up on air and food.</div>`
+          ? `<div class="advice storm"><b>Storm ${pct}% likely tomorrow (${odds(pct)}).</b> Blocking it all takes ${shelterNeed()} shelter power. Protect, or gamble and use that power elsewhere?</div>`
+          : `<div class="advice dust"><b>Dust ${pct}% likely tomorrow (${odds(pct)}).</b> If it comes, power drops to ${Math.max(2, game.tier.dust + lv("panels") + game.discoveries)}. Stock up today, or gamble?</div>`
         : `<div class="advice calm">Tomorrow looks calm. Good time for science.</div>`;
-  return `<div class="card"><h2>Forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
+  return `<div class="card"><h2>Forecast</h2><div class="fgrid">${tiles}</div>${advice}
+    ${more("odds", "What does % mean?", `<p class="fact">Forecasts are never certain. 70% means a storm comes about 7 times out of 10. Real space weather forecasters work with chances like this every day.${game.warning ? " Your satellite makes the numbers sharper." : ""}</p>`)}</div>`;
 }
 
 function quizCard() {
@@ -1012,7 +1218,7 @@ const MESSAGES = [
   },
   {
     from: "Engineer Sam",
-    text: "Tip: spare parts and a calm plan fix most problems.",
+    text: "Tip: spare parts and a calm plan fix most problems. And don’t run one system flat out day after day!",
   },
   {
     from: "Mission Control",
@@ -1030,26 +1236,28 @@ const MESSAGES = [
 
 // Messages react to what is happening in the game.
 function todaysMessages() {
-  const ev = todayEvent(),
-    nx = game.events[game.sol + 1],
+  const tt = threat(game.sol),
+    nx = threat(game.sol + 1),
     MC = { from: "Mission Control" };
+  const pt = tt ? shownChance(game.sol) : 0,
+    pn = nx ? shownChance(game.sol + 1) : 0;
   let hot = null;
-  if (ev?.type === "storm")
+  if (tt?.type === "storm" && pt > 0)
     hot = {
       ...MC,
-      text: "RADIATION ALERT! Everyone to the shelter. Power it up now!",
+      text: `RADIATION WATCH! Our sensors say a ${pt}% chance of a storm today. Is the shelter worth the power?`,
       urgent: true,
     };
-  else if (nx?.type === "storm")
+  else if (nx?.type === "storm" && pn > 0)
     hot = {
       ...MC,
-      text: "Our solar scouts spotted a flare. A storm reaches you tomorrow. Plan your shelter power.",
+      text: `Our solar scouts spotted a flare. There is a ${pn}% chance it reaches you tomorrow. Plan your shelter power.`,
       urgent: true,
     };
-  else if (nx?.type === "dust")
+  else if (nx?.type === "dust" && pn > 0)
     hot = {
       ...MC,
-      text: "A big dust cloud is rolling in. Tomorrow’s sunshine will be weak. Stock up today.",
+      text: `A dust cloud is rolling in (${pn}% likely tomorrow). Sunshine would be weak. Stock up today?`,
       urgent: true,
     };
   else if (game.air <= 3)
@@ -1094,20 +1302,25 @@ function extras() {
 
 function projection() {
   const a = game.alloc,
-    ev = todayEvent();
-  let dose = a.S ? 0 : 0.25;
-  if (ev?.type === "storm") dose += stormHit(a.S);
+    thr = threat(game.sol);
   return {
     air: -CONFIG.crewAir + 2 * a.L + a.G,
     food: -CONFIG.crewFood + (2 + lv("seeds")) * a.G,
-    dose,
+    dose: a.S ? 0 : 0.25,
+    risk: thr?.type === "storm" ? stormHit(a.S) : 0, // extra radiation IF the storm hits
   };
 }
 // Little picture of the base. Lights turn on when you give a building power.
 function scene() {
   const a = game.alloc,
-    ev = todayEvent(),
-    t = ev ? ev.type : "";
+    th = threat(game.sol);
+  // Dust shows only if it is real. Storm rays show on any storm-risk day (no spoilers).
+  const t =
+    todayEvent()?.type === "dust"
+      ? "dust"
+      : th?.type === "storm"
+        ? "storm"
+        : "";
   const lamp = (v, x, y) =>
     `<circle cx="${x}" cy="${y}" r="5" fill="${v > 0 ? "#ffc933" : "#6b6690"}" stroke="#1e1a3c" stroke-width="2"/>`;
   const st = 'stroke="#1e1a3c" stroke-width="3" stroke-linejoin="round"';
@@ -1139,15 +1352,17 @@ function meter(icon, label, value, max, lowWhen) {
 function render() {
   if (game.result) return renderEnd();
   const ev = todayEvent(),
+    thr = threat(game.sol),
     p = power();
 
   // Today's event (short, with the NASA fact tucked away)
   let eventCard = "";
-  if (ev?.type === "storm") {
-    const need = shelterNeed();
-    eventCard = `<div class="card warn"><h2>${ic("dose")} Radiation storm today</h2>
-      <p>Put <b>${need}</b> power in the shelter to block it all.</p>
-      ${more("fact", "Real NASA fact", `<p class="fact"><b>${ev.data.title}.</b> ${ev.data.fact}</p>`)}</div>`;
+  if (thr?.type === "storm") {
+    const pct = shownChance(game.sol),
+      need = shelterNeed();
+    eventCard = `<div class="card warn"><h2>${ic("dose")} Storm risk today: ${pct}%</h2>
+      <p>It is ${odds(pct)}. Blocking it all takes <b>${need}</b> shelter power. Skip it and you are gambling.</p>
+      ${more("fact", "Real NASA fact", `<p class="fact"><b>${thr.data.title}.</b> ${thr.data.fact}</p>`)}</div>`;
   }
   if (ev?.type === "dust")
     eventCard = `<div class="card warn"><h2>${ic("dust")} ${ev.data.title}</h2>
@@ -1155,7 +1370,9 @@ function render() {
       ${more("fact", "Real NASA fact", `<p class="fact">${ev.data.fact}</p>`)}</div>`;
 
   const cells = Array.from(
-    { length: Math.max(p, CONFIG.normalPower + lv("panels")) },
+    {
+      length: Math.max(p, CONFIG.normalPower + lv("panels") + game.discoveries),
+    },
     (_, i) =>
       `<div class="cell ${i < used() ? "on" : ""} ${i >= p ? "dead" : ""}"></div>`,
   ).join("");
@@ -1165,7 +1382,8 @@ function render() {
   const proj = `<div class="proj"><b>Result:</b>
     <span class="${pr.air < 0 ? "neg" : "pos"}">${ic("L")} Air ${sgn(pr.air)}</span>
     <span class="${pr.food < 0 ? "neg" : "pos"}">${ic("food")} Food ${sgn(pr.food)}</span>
-    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Rad ${sgn(pr.dose)}</span></div>`;
+    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Rad ${sgn(pr.dose)}</span>
+    ${pr.risk > 0 ? `<span class="neg">${ic("dose")} +${pr.risk} more if the storm hits</span>` : ""}</div>`;
 
   const systems = SYSTEMS.map(
     (s) => `
@@ -1176,6 +1394,7 @@ function render() {
         <span>${game.alloc[s.key]}</span>
         <button onclick="change('${s.key}',1)" aria-label="More power to ${s.name}" ${used() >= p || game.alloc[s.key] >= 4 ? "disabled" : ""}>+</button>
       </div>
+      ${game.strain[s.key] >= 1 && game.strain[s.key] < CONFIG.strainDays ? `<small class="hotnote">Running hot! Full power again will overheat it.</small>` : ""}
     </div>`,
   ).join("");
 
@@ -1187,12 +1406,17 @@ function render() {
       "",
     ) +
       `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>` +
+      `<p class="fact"><b>Overheating:</b> a system at full power ${CONFIG.strainDays} days in a row breaks (${CONFIG.strainPenalty} less power next day).</p>` +
+      `<p class="fact"><b>Discoveries:</b> every ${CONFIG.discoveryEvery} research points gives +1 power for the rest of the mission (max ${CONFIG.maxDiscoveries}). You have ${game.discoveries}.</p>` +
       `<p class="fact"><b>Cargo on this mission:</b> ${game.cargo.map(nameOf).join(", ") || "nothing packed"}.</p>`,
   );
 
   // How many bonus activities are still open today (shown as a small number)
   const bonusLeft =
     (game.quizRes[game.sol] ? 0 : 1) + (game.roverDay === game.sol ? 0 : 1);
+
+  const left = p - used();
+  const why = game.penaltyWhy[game.sol] || [];
 
   app.className = "wide";
   app.innerHTML = `<div class="layout">
@@ -1205,7 +1429,7 @@ function render() {
       <div class="card hud">
         <div class="hudrow">
           <span class="big">Day ${game.sol}<small> / ${game.total}</small></span>
-          <span>${ic("R")} ${game.science} pts</span>
+          <span>${ic("R")} ${game.science} pts${game.discoveries ? ` · +${game.discoveries} power` : ""}</span>
         </div>
         <div class="progress"><i style="width:${(game.sol / game.total) * 100}%"></i></div>
         <div class="meters">
@@ -1214,8 +1438,7 @@ function render() {
           ${meter("dose", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
         </div>
       </div>
-      ${game.report ? `<div class="card news">${game.report}</div>` : ""}
-      ${game.penalty[game.sol] ? `<div class="card warn"><b>Damaged equipment:</b> ${game.penalty[game.sol]} less power today.</div>` : ""}
+      ${game.penalty[game.sol] ? `<div class="card warn"><b>${game.penalty[game.sol]} less power today</b> because ${why.join(" and ")}.</div>` : ""}
       ${eventCard}
       ${forecastStrip()}
     </div>
@@ -1228,12 +1451,27 @@ function render() {
         ${proj}
         ${help}
         ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">${ic("battery")} Use battery pack (+3 power today)</button>` : ""}
-        <button class="go" onclick="runSol()">Run Day ${game.sol} ▶</button>
+        <button class="go" onclick="runSol()" ${left > 0 ? "disabled" : ""}>${left > 0 ? `Use ${left} more power to run the day` : `Run Day ${game.sol} ▶`}</button>
       </div>
       ${fold("bonus", "Bonus activities", quizCard() + roverButton(), bonusLeft ? `<span class="pill">${bonusLeft}</span>` : "")}
       ${extras()}
     </div>
   </div>`;
+}
+
+// Best and worst moments of the mission, with the day they happened
+function debriefHTML() {
+  const good = game.log.filter((e) => e.tone === "good").slice(0, 2);
+  const bad = game.log.filter((e) => e.tone === "bad").slice(-3);
+  const rows = [...good, ...bad]
+    .sort((a, b) => a.day - b.day)
+    .map((e) => `<li class="${e.tone}"><b>Day ${e.day}:</b> ${e.text}</li>`)
+    .join("");
+  return `<div class="card"><h2>What your choices led to</h2>${
+    rows
+      ? `<ul class="debrief">${rows}</ul>`
+      : "<p>A quiet mission. Nothing big happened.</p>"
+  }</div>`;
 }
 
 function renderEnd() {
@@ -1271,13 +1509,15 @@ function renderEnd() {
   app.innerHTML = `
     <h1>${msg}</h1>
     ${result}
+    ${debriefHTML()}
     ${fold(
       "learn",
       "What you learned",
       `<p><b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
-      <p><b>Space weather matters.</b> Mission planners watch NASA’s DONKI database for flares, then decide when to shelter.</p>
+      <p><b>Forecasts are chances, not promises.</b> Mission planners watch NASA’s DONKI database for flares, then decide when to shelter and when to risk it.</p>
       <p><b>Mars can surprise you.</b> Dust storms cut solar power, like the one in 2018 that stopped the Opportunity rover.</p>
       <p><b>Help is far away.</b> Signals between Earth and Mars take 3 to 22 minutes, so crews decide on their own.</p>
+      <p><b>Everything is connected.</b> Pushing one system too hard breaks it, and a tired crew makes less power.</p>
       <p><b>Cargo is limited.</b> A rocket can only carry so much, so crews choose what to bring.</p>`,
     )}
     <button class="go" onclick="showMenu()">Cargo &amp; upgrades</button>
