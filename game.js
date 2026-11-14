@@ -569,6 +569,7 @@ function applyEmergency(choice, timedOut) {
 /* ---------- MAIN MENU + HOW TO PLAY ---------- */
 function showMain() {
   game = null;
+  app.className = "";
   app.innerHTML = `
     <div class="hero">
       <div class="logo">🚀</div>
@@ -647,6 +648,7 @@ function resetSave() {
 
 function showMenu() {
   game = null;
+  app.className = "";
   const ups = UPGRADES.map((u) => {
     const L = lv(u.key),
       cost = u.costs[L],
@@ -774,6 +776,135 @@ function startRover() {
   }, 1000);
 }
 
+/* ---------- SIDE PANELS: news + messages from Earth ---------- */
+// Real facts about Mars and NASA missions. Add your own!
+const NEWS = [
+  "Curiosity rover has explored Gale Crater on Mars since 2012.",
+  "Perseverance landed in Jezero Crater in February 2021.",
+  "The Ingenuity helicopter made the first powered flights on another planet.",
+  "Mars sunsets look blue, the opposite of Earth’s.",
+  "Mars gravity is only about 38% of Earth’s gravity.",
+  "Mars looks red because its dust contains iron oxide, like rust.",
+  "Olympus Mons on Mars is the tallest known volcano in the solar system.",
+  "Mars has two small moons named Phobos and Deimos.",
+  "NASA’s InSight lander recorded marsquakes, Mars’ version of earthquakes.",
+  "Astronauts have lived on the Space Station nonstop since November 2000.",
+  "NASA’s Artemis program plans to send astronauts back to the Moon.",
+  "DONKI is NASA’s database that logs solar flares and other space weather.",
+];
+const MESSAGES = [
+  {
+    from: "Mission Control",
+    icon: "🧑‍🚀",
+    text: "Good morning, crew! Check the forecast before you share out power.",
+  },
+  {
+    from: "Dr. Rivera, solar scientist",
+    icon: "☀️",
+    text: "We watch the Sun every day. Flares can reach Mars fast, so shelter early.",
+  },
+  {
+    from: "Your family",
+    icon: "🏠",
+    text: "We looked up at Mars tonight. It was a tiny red dot. We are so proud of you!",
+  },
+  {
+    from: "Class 5, Earth School",
+    icon: "🏫",
+    text: "We are growing beans in class, just like your greenhouse!",
+  },
+  {
+    from: "Engineer Sam",
+    icon: "🔧",
+    text: "Tip: spare parts and a calm plan fix most problems.",
+  },
+  {
+    from: "Mission Control",
+    icon: "🧑‍🚀",
+    text: "Remember: radiation dose never goes down. Shelter is cheaper than going home.",
+  },
+  {
+    from: "Chef Amara",
+    icon: "🍲",
+    text: "One greenhouse unit feeds the crew for a day. Plants make a little air too!",
+  },
+  {
+    from: "Mission Control",
+    icon: "🧑‍🚀",
+    text: "Our messages take minutes to reach you. You are the experts on the ground.",
+  },
+];
+
+// Messages react to what is happening in the game.
+function todaysMessages() {
+  const ev = todayEvent(),
+    nx = game.events[game.sol + 1],
+    MC = { from: "Mission Control", icon: "🧑‍🚀" };
+  let hot = null;
+  if (ev?.type === "storm")
+    hot = {
+      ...MC,
+      text: "RADIATION ALERT! Everyone to the shelter. Power it up now!",
+      urgent: true,
+    };
+  else if (nx?.type === "storm")
+    hot = {
+      ...MC,
+      text: "Our solar scouts spotted a flare. A storm reaches you tomorrow. Plan your shelter power.",
+      urgent: true,
+    };
+  else if (nx?.type === "dust")
+    hot = {
+      ...MC,
+      text: "A big dust cloud is rolling in. Tomorrow’s sunshine will be weak. Stock up today.",
+      urgent: true,
+    };
+  else if (game.air <= 3)
+    hot = {
+      ...MC,
+      text: "Your air is getting low. Put more power into life support!",
+      urgent: true,
+    };
+  else if (game.food <= 3)
+    hot = {
+      ...MC,
+      text: "Food is low. Don’t forget the greenhouse!",
+      urgent: true,
+    };
+  else if (game.dose >= 6)
+    hot = {
+      ...MC,
+      text: "Your radiation dose is high. Spend more time in the shelter.",
+      urgent: true,
+    };
+  const list = [
+    hot || MESSAGES[game.sol % MESSAGES.length],
+    MESSAGES[(game.sol + 3) % MESSAGES.length],
+  ];
+  return list.map((m, i) => ({ ...m, ago: DELAYS[(game.sol + i) % 4] }));
+}
+const msgHTML = (m) =>
+  `<div class="msg ${m.urgent ? "urgent" : ""}"><span class="av">${m.icon}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${m.ago} ago</small></div></div>`;
+function messagePanel() {
+  return `<div class="card"><h2>📬 From Earth</h2>${todaysMessages().map(msgHTML).join("")}</div>`;
+}
+function mobileMsg() {
+  return `<div class="card only-narrow">${msgHTML(todaysMessages()[0])}</div>`;
+}
+function newsPanel() {
+  const ev = todayEvent(),
+    lines = [];
+  if (ev?.type === "storm")
+    lines.push("BREAKING: Radiation storm hits the outpost!");
+  else if (ev?.type === "dust")
+    lines.push("BREAKING: Dust storm cuts solar power!");
+  else lines.push(`Crew has earned ${game.science} research points so far.`);
+  for (let i = 0; i < 3; i++)
+    lines.push(NEWS[(game.sol * 3 + i) % NEWS.length]);
+  return `<div class="card"><h2>📰 Mars Daily</h2><small class="fact">Day ${game.sol} edition</small>
+    ${lines.map((l, i) => `<p class="headline ${i === 0 && l.startsWith("BREAKING") ? "breaking" : ""}">${l}</p>`).join("")}</div>`;
+}
+
 /* ---------- DRAWING THE SCREEN ---------- */
 function meter(icon, label, value, max, lowWhen) {
   const low = lowWhen(value);
@@ -815,8 +946,10 @@ function render() {
     </div>`,
   ).join("");
 
-  app.innerHTML = `
+  app.className = "wide";
+  app.innerHTML = `<div class="layout"><aside class="side">${newsPanel()}</aside><div class="center">
     <button class="back" onclick="quitMission()">◀ Menu</button>
+    ${mobileMsg()}
     <h1>🚀 Mars Outpost</h1>
     <p class="sub">Keep your crew alive for ${CONFIG.totalSols} days on Mars.</p>
     <div class="card">
@@ -841,10 +974,11 @@ function render() {
       <div class="acts">${quizCard()}${roverButton()}</div>
       ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">🔋 Use battery pack (+3 power today)</button>` : ""}
       <button class="go" onclick="runSol()">Run Day ${game.sol} ▶</button>
-    </div>`;
+    </div></div><aside class="side">${messagePanel()}</aside></div>`;
 }
 
 function renderEnd() {
+  app.className = "";
   const msg = {
     win: `🎉 You made it! ${game.science} research points.`,
     air: "💨 The air ran out.",
