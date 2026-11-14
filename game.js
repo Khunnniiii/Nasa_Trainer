@@ -22,25 +22,25 @@ const CONFIG = {
 const SYSTEMS = [
   {
     key: "L",
-    icon: "💨",
+    icon: "",
     name: "Life support",
     hint: "Makes air. Needs 2 units a day to break even.",
   },
   {
     key: "G",
-    icon: "🌱",
+    icon: "",
     name: "Greenhouse",
     hint: "Grows food and a little air. 1 unit feeds the crew.",
   },
   {
     key: "S",
-    icon: "🛡️",
+    icon: "",
     name: "Storm shelter",
     hint: "Shields the crew. 3 units blocks nearly all radiation.",
   },
   {
     key: "R",
-    icon: "🔬",
+    icon: "",
     name: "Science lab",
     hint: "Earns research points. Nothing else.",
   },
@@ -278,6 +278,33 @@ const QUIZ = [
   },
 ];
 
+/* ---------- ICONS (simple line icons, edit paths freely) ---------- */
+const ICON = {
+  L: '<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
+  G: '<path d="M12 21v-9M12 12C12 7 8 5 4 5c0 5 3 7 8 7zM12 14c0-4 3-6 8-6 0 5-3 7-8 6z"/>',
+  S: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  R: '<path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7.5 15h9"/>',
+  bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  dose: '<circle cx="12" cy="12" r="1.5"/><path d="M12 10.5 8.5 4.5a9 9 0 0 1 7 0zM13.3 12.8l3.5 6a9 9 0 0 1-7 .2zM10.7 12.8l-3.5 6A9 9 0 0 1 3 12z"/>',
+  food: '<path d="M12 7c-4-3-9 0-7 6 1 4 4 8 7 6 3 2 6-2 7-6 2-6-3-9-7-6zM12 7c0-2 1-4 3-4"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  dust: '<path d="M2 8c3-3 5 3 8 0s5 3 8 0M2 14c3-3 5 3 8 0s5 3 8 0M2 20c3-3 5 3 8 0s5 3 8 0"/>',
+  walls: '<path d="M3 5h18v14H3zM3 12h18M9 5v7M15 12v7"/>',
+  tanks: '<rect x="6" y="3" width="12" height="18" rx="5"/><path d="M6 9h12"/>',
+  drills: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/>',
+  warning:
+    '<rect x="9" y="9" width="6" height="6" rx="1"/><path d="M3 11l4-4 3 3-4 4zM21 13l-4 4-3-3 4-4zM12 9V5"/>',
+  battery:
+    '<rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M7 10v4M11 10v4"/>',
+  rover:
+    '<circle cx="7" cy="17" r="2.5"/><circle cx="17" cy="17" r="2.5"/><path d="M4 14h16l-2-5h-6l-1-3H8l1 3H6z"/>',
+};
+ICON.panels = ICON.sun;
+ICON.seeds = ICON.G;
+const ic = (k) =>
+  `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ""}</svg>`;
+const AVC = ["#62c3ff", "#35d8a0", "#ffc933", "#ff8fa0"];
+
 /* ---------- STATE ---------- */
 let game = null;
 const app = document.getElementById("app");
@@ -306,35 +333,35 @@ const take = (k) => {
 const UPGRADES = [
   {
     key: "panels",
-    icon: "☀️",
+    icon: "",
     name: "Better solar panels",
     desc: "+1 power every day.",
     costs: [15, 30],
   },
   {
     key: "walls",
-    icon: "🧱",
+    icon: "",
     name: "Thicker shelter walls",
     desc: "Blocks 1 more radiation in every storm.",
     costs: [12, 25],
   },
   {
     key: "tanks",
-    icon: "🛢️",
+    icon: "",
     name: "Bigger tanks",
     desc: "Start with +2 air and +2 food, and store more.",
     costs: [10, 20],
   },
   {
     key: "seeds",
-    icon: "🥕",
+    icon: "",
     name: "Hardy seeds",
     desc: "Each greenhouse unit grows 1 more food.",
     costs: [20],
   },
   {
     key: "drills",
-    icon: "⏱️",
+    icon: "⏱",
     name: "Emergency drills",
     desc: "+4 seconds to decide in emergencies.",
     costs: [8, 16],
@@ -344,14 +371,14 @@ const UPGRADES = [
 const ITEMS = [
   {
     key: "warning",
-    icon: "🛰️",
+    icon: "",
     name: "Early-warning satellite",
     desc: "Next mission only: see storms 2 days ahead.",
     cost: 6,
   },
   {
     key: "battery",
-    icon: "🔋",
+    icon: "",
     name: "Battery pack",
     desc: "Next mission only: +3 power on a day you choose.",
     cost: 8,
@@ -500,11 +527,11 @@ function showEmergency(em) {
   let left = total;
   const opts = [...em.choices].sort(() => Math.random() - 0.5); // shuffle so the best one moves around
   const box = popup(`
-    <h2>🚨 ${em.title}</h2><p>${em.text}</p>
+    <h2>${em.title}</h2><p>${em.text}</p>
     <div class="timer"><i></i></div>
     <p class="count">Decide in <b>${left}</b> seconds!</p>
     ${opts.map((c, i) => `<button class="choice" data-i="${i}"><b>${c.label}</b><small>${c.cost}</small></button>`).join("")}
-    <p class="fact">📡 Earth would take about ${DELAYS[game.sol % 4]} to answer, which is too slow. You decide!</p>`);
+    <p class="fact">Earth would take about ${DELAYS[game.sol % 4]} to answer, which is too slow. You decide!</p>`);
 
   const bar = box.querySelector(".timer i"),
     num = box.querySelector(".count b");
@@ -525,17 +552,13 @@ function showEmergency(em) {
 }
 
 const CHIPS = {
-  air: "💨 Air",
-  food: "🍎 Food",
-  dose: "☢️ Radiation",
-  science: "🔬 Research",
-  powerNext: "⚡ Power tomorrow",
+  air: "Air",
+  food: "Food",
+  dose: "Radiation",
+  science: "Research",
+  powerNext: "Power tomorrow",
 };
-const GRADES = {
-  good: "✅ Great choice!",
-  ok: "🤔 Not bad",
-  bad: "❌ Risky choice",
-};
+const GRADES = { good: "Great choice!", ok: "Not bad", bad: "Risky choice" };
 
 function applyEmergency(choice, timedOut) {
   const e = choice.effect;
@@ -558,11 +581,11 @@ function applyEmergency(choice, timedOut) {
   const box = popup(`
     <h2 class="g-${grade}">${timedOut ? "⏰ Time ran out!" : GRADES[grade]}</h2>
     <p>${choice.result}</p><div class="chips">${chips}</div>
-    <p class="fact">💡 ${choice.lesson}</p>
+    <p class="fact">${choice.lesson}</p>
     <button class="go" id="cont">Continue ▶</button>`);
   box.querySelector("#cont").onclick = () => {
     box.remove();
-    finishDay([`🚨 ${timedOut ? "Time ran out! " : ""}${choice.result}`]);
+    finishDay([`${timedOut ? "Time ran out! " : ""}${choice.result}`]);
   };
 }
 
@@ -572,29 +595,29 @@ function showMain() {
   app.className = "";
   app.innerHTML = `
     <div class="hero">
-      <div class="logo">🚀</div>
+      <svg class="logo" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#c4553b" stroke="#1e1a3c" stroke-width="4"/><ellipse cx="32" cy="34" rx="30" ry="9" fill="none" stroke="#ffc933" stroke-width="4" transform="rotate(-20 32 34)"/><circle cx="24" cy="26" r="4" fill="#8e3a3a"/><circle cx="38" cy="40" r="3" fill="#8e3a3a"/></svg>
       <h1>Mars Outpost</h1>
       <p class="sub">Can you keep your crew alive for ${CONFIG.totalSols} days?</p>
     </div>
     <button class="go" onclick="startMission()">▶ Play</button>
-    <button class="go alt" onclick="showMenu()">🔧 Upgrades <span class="pill">🔬 ${save.points}</span></button>
-    <button class="go alt" onclick="showHow()">📖 How to play</button>`;
+    <button class="go alt" onclick="showMenu()">Upgrades <span class="pill">${save.points}</span></button>
+    <button class="go alt" onclick="showHow()">How to play</button>`;
   window.scrollTo(0, 0);
 }
 
 function showHow() {
   app.innerHTML = `
-    <h1>📖 How to play</h1>
+    <h1>How to play</h1>
     <div class="card"><h2>Your job</h2>
       <p>Each day you get a few <b>power units</b>. Share them between life support, the greenhouse, the storm shelter and the science lab. Press <b>Run Day</b> to see what happens.</p>
-      <p>⚠️ Power is never enough for everything, so every choice has a cost.</p></div>
+      <p>Power is never enough for everything, so every choice has a cost.</p></div>
     <div class="card"><h2>Watch out for</h2>
-      <p>☀️ <b>Radiation storms</b>: power the shelter when the forecast warns you.</p>
-      <p>🌪️ <b>Dust storms</b>: less sunlight means less power.</p>
-      <p>🚨 <b>Emergencies</b>: pick fast before the timer runs out!</p></div>
+      <p><b>Radiation storms</b>: power the shelter when the forecast warns you.</p>
+      <p><b>Dust storms</b>: less sunlight means less power.</p>
+      <p><b>Emergencies</b>: pick fast before the timer runs out!</p></div>
     <div class="card"><h2>After the mission</h2>
       <p>Research points you earn can buy upgrades for your next mission.</p></div>
-    <div class="card"><h2>🌍 Real NASA science</h2>
+    <div class="card"><h2>Real NASA science</h2>
       <p class="fact">The storms and dust storms are based on real, archived NASA records: DONKI space weather (May 2024 and Oct 2003 storms), the 1972 Apollo-era flare, and the 2018 Mars dust storm that stopped the Opportunity rover. They are not live data. Game numbers are simplified for play.</p></div>
     <button class="go" onclick="showMain()">◀ Back</button>`;
   window.scrollTo(0, 0);
@@ -653,19 +676,19 @@ function showMenu() {
     const L = lv(u.key),
       cost = u.costs[L],
       maxed = cost === undefined;
-    return `<div class="system"><div class="icon">${u.icon}</div>
+    return `<div class="system"><div class="icon">${ic(u.key)}</div>
       <div class="info"><b>${u.name}</b><small>${u.desc}</small><span class="pips">${"●".repeat(L)}${"○".repeat(u.costs.length - L)}</span></div>
-      <button class="buy" onclick="buyUpgrade('${u.key}')" ${maxed || save.points < cost ? "disabled" : ""}>${maxed ? "Maxed" : "🔬 " + cost}</button></div>`;
+      <button class="buy" onclick="buyUpgrade('${u.key}')" ${maxed || save.points < cost ? "disabled" : ""}>${maxed ? "Maxed" : "" + cost}</button></div>`;
   }).join("");
   const items = ITEMS.map(
-    (it) => `<div class="system"><div class="icon">${it.icon}</div>
+    (it) => `<div class="system"><div class="icon">${ic(it.key)}</div>
       <div class="info"><b>${it.name}</b><small>${it.desc}</small></div>
-      <button class="buy" onclick="buyItem('${it.key}')" ${save.items[it.key] || save.points < it.cost ? "disabled" : ""}>${save.items[it.key] ? "Packed ✓" : "🔬 " + it.cost}</button></div>`,
+      <button class="buy" onclick="buyItem('${it.key}')" ${save.items[it.key] || save.points < it.cost ? "disabled" : ""}>${save.items[it.key] ? "Packed " : "" + it.cost}</button></div>`,
   ).join("");
   app.innerHTML = `
-    <h1>🚀 Mars Outpost</h1>
+    <h1>Mars Outpost</h1>
     <p class="sub">Get your crew through ${CONFIG.totalSols} days. Spend research points to make the next mission safer.</p>
-    <div class="card"><h2>🔬 ${save.points} research points</h2>
+    <div class="card"><h2>${save.points} research points</h2>
       <p class="fact">Earn points from the science lab each mission, plus 10 for surviving.</p></div>
     <div class="card"><h2>Upgrades</h2><p class="fact">These stay forever.</p>${ups}</div>
     <div class="card"><h2>Pack for next mission</h2><p class="fact">These are used up on your next mission.</p>${items}</div>
@@ -682,7 +705,11 @@ function forecastStrip() {
   for (let d = game.sol; d < game.sol + 4 && d <= CONFIG.totalSols; d++) {
     const known = d - game.sol < look,
       e = game.events[d];
-    const icon = !known ? "❓" : e ? (e.type === "storm" ? "☀️" : "🌪️") : "🌤️";
+    const icon = !known
+      ? "?"
+      : e
+        ? ic(e.type === "storm" ? "dose" : "dust")
+        : ic("sun");
     const name = !known
       ? "Unknown"
       : e
@@ -698,10 +725,10 @@ function forecastStrip() {
       ? ""
       : nx
         ? nx.type === "storm"
-          ? `<div class="advice storm">☀️ <b>Radiation storm tomorrow!</b> Plan to put 3 power into the Storm shelter tomorrow.</div>`
-          : `<div class="advice dust">🌪️ <b>Dust storm tomorrow!</b> You will only have ${CONFIG.dustPower + lv("panels")} power. Stock up on air and food today.</div>`
-        : `<div class="advice calm">🌤️ Tomorrow looks calm. A good time for science!</div>`;
-  return `<div class="card"><h2>📡 Mission Control forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
+          ? `<div class="advice storm"><b>Radiation storm tomorrow!</b> Plan to put 3 power into the Storm shelter tomorrow.</div>`
+          : `<div class="advice dust"><b>Dust storm tomorrow!</b> You will only have ${CONFIG.dustPower + lv("panels")} power. Stock up on air and food today.</div>`
+        : `<div class="advice calm">Tomorrow looks calm. A good time for science!</div>`;
+  return `<div class="card"><h2>Mission Control forecast</h2><div class="fgrid">${tiles}</div>${advice}</div>`;
 }
 
 function quizCard() {
@@ -709,10 +736,10 @@ function quizCard() {
     Q = QUIZ[game.quizOrder[(d - 1) % QUIZ.length]],
     res = game.quizRes[d];
   if (res)
-    return `<div class="act"><b>📡 Question from Earth</b><p class="fact">${res.ok ? "✅ Correct! +1 research point." : "❌ Not quite. The answer is: " + Q.right + "."} ${Q.why}</p></div>`;
+    return `<div class="act"><b>Question from Earth</b><p class="fact">${res.ok ? "Correct! +1 research point." : "Not quite. The answer is: " + Q.right + "."} ${Q.why}</p></div>`;
   if (!game.quizOpts[d])
     game.quizOpts[d] = [Q.right, ...Q.wrong].sort(() => Math.random() - 0.5);
-  return `<div class="act"><b>📡 Quick question from Earth</b> <small>(+1 research point)</small><p>${Q.q}</p>
+  return `<div class="act"><b>Quick question from Earth</b> <small>(+1 research point)</small><p>${Q.q}</p>
     ${game.quizOpts[d].map((o, i) => `<button class="opt" onclick="answerQuiz(${i})">${o}</button>`).join("")}</div>`;
 }
 function answerQuiz(i) {
@@ -726,8 +753,8 @@ function answerQuiz(i) {
 
 function roverButton() {
   if (game.roverDay === game.sol)
-    return `<div class="act"><b>🤖 Rover</b><p class="fact">The rover is charging. Send it again tomorrow.</p></div>`;
-  return `<button class="item" onclick="startRover()" ${used() >= power() ? "disabled" : ""}>🤖 Rover sample mission<br><small>Costs 1 power. Tap rocks to earn up to 4 research points.</small></button>`;
+    return `<div class="act"><b>Rover</b><p class="fact">The rover is charging. Send it again tomorrow.</p></div>`;
+  return `<button class="item" onclick="startRover()" ${used() >= power() ? "disabled" : ""}>${ic("rover")} Rover sample mission<br><small>Costs 1 power. Tap rocks to earn up to 4 research points.</small></button>`;
 }
 function startRover() {
   if (used() >= power() || game.roverDay === game.sol) return;
@@ -737,15 +764,15 @@ function startRover() {
   let left = 10,
     got = 0;
   const box =
-    popup(`<h2>🤖 Rover sample mission</h2><p>Tap the rocks before they roll away!</p>
-    <p class="count">⏱️ <b>${left}</b>s · Samples: <span id="got">0</span></p><div class="arena"></div>`);
+    popup(`<h2>Rover sample mission</h2><p>Tap the rocks before they roll away!</p>
+    <p class="count">⏱<b>${left}</b>s · Samples: <span id="got">0</span></p><div class="arena"></div>`);
   const arena = box.querySelector(".arena"),
     gotEl = box.querySelector("#got"),
     num = box.querySelector(".count b");
   const sp = setInterval(() => {
     const r = document.createElement("button");
     r.className = "rock";
-    r.textContent = "🪨";
+    r.textContent = "";
     r.style.left = Math.random() * 80 + "%";
     r.style.top = Math.random() * 75 + "%";
     r.onclick = () => {
@@ -764,8 +791,7 @@ function startRover() {
     clearInterval(sp);
     const pts = Math.min(4, Math.floor(got / 2));
     game.science += pts;
-    box.querySelector(".alert").innerHTML =
-      `<h2>🪨 ${got} samples collected!</h2>
+    box.querySelector(".alert").innerHTML = `<h2>${got} samples collected!</h2>
       <p>${pts ? "+" + pts + " research points!" : "No points this time. Try again tomorrow!"}</p>
       <p class="fact">Real rovers like Curiosity and Perseverance collect rocks to study Mars. Their power is limited too.</p>
       <button class="go" id="ok">Back to base ▶</button>`;
@@ -795,42 +821,42 @@ const NEWS = [
 const MESSAGES = [
   {
     from: "Mission Control",
-    icon: "🧑‍🚀",
+    icon: "",
     text: "Good morning, crew! Check the forecast before you share out power.",
   },
   {
     from: "Dr. Rivera, solar scientist",
-    icon: "☀️",
+    icon: "",
     text: "We watch the Sun every day. Flares can reach Mars fast, so shelter early.",
   },
   {
     from: "Your family",
-    icon: "🏠",
+    icon: "",
     text: "We looked up at Mars tonight. It was a tiny red dot. We are so proud of you!",
   },
   {
     from: "Class 5, Earth School",
-    icon: "🏫",
+    icon: "",
     text: "We are growing beans in class, just like your greenhouse!",
   },
   {
     from: "Engineer Sam",
-    icon: "🔧",
+    icon: "",
     text: "Tip: spare parts and a calm plan fix most problems.",
   },
   {
     from: "Mission Control",
-    icon: "🧑‍🚀",
+    icon: "",
     text: "Remember: radiation dose never goes down. Shelter is cheaper than going home.",
   },
   {
     from: "Chef Amara",
-    icon: "🍲",
+    icon: "",
     text: "One greenhouse unit feeds the crew for a day. Plants make a little air too!",
   },
   {
     from: "Mission Control",
-    icon: "🧑‍🚀",
+    icon: "",
     text: "Our messages take minutes to reach you. You are the experts on the ground.",
   },
 ];
@@ -839,7 +865,7 @@ const MESSAGES = [
 function todaysMessages() {
   const ev = todayEvent(),
     nx = game.events[game.sol + 1],
-    MC = { from: "Mission Control", icon: "🧑‍🚀" };
+    MC = { from: "Mission Control", icon: "" };
   let hot = null;
   if (ev?.type === "storm")
     hot = {
@@ -884,9 +910,9 @@ function todaysMessages() {
   return list.map((m, i) => ({ ...m, ago: DELAYS[(game.sol + i) % 4] }));
 }
 const msgHTML = (m) =>
-  `<div class="msg ${m.urgent ? "urgent" : ""}"><span class="av">${m.icon}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${m.ago} ago</small></div></div>`;
+  `<div class="msg ${m.urgent ? "urgent" : ""}"><span class="av" style="background:${AVC[m.from.length % 4]}">${m.from[0]}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${m.ago} ago</small></div></div>`;
 function messagePanel() {
-  return `<div class="card"><h2>📬 From Earth</h2>${todaysMessages().map(msgHTML).join("")}</div>`;
+  return `<div class="card"><h2>From Earth</h2>${todaysMessages().map(msgHTML).join("")}</div>`;
 }
 function mobileMsg() {
   return `<div class="card only-narrow">${msgHTML(todaysMessages()[0])}</div>`;
@@ -901,8 +927,39 @@ function newsPanel() {
   else lines.push(`Crew has earned ${game.science} research points so far.`);
   for (let i = 0; i < 3; i++)
     lines.push(NEWS[(game.sol * 3 + i) % NEWS.length]);
-  return `<div class="card"><h2>📰 Mars Daily</h2><small class="fact">Day ${game.sol} edition</small>
+  return `<div class="card"><h2>Mars Daily</h2><small class="fact">Day ${game.sol} edition</small>
     ${lines.map((l, i) => `<p class="headline ${i === 0 && l.startsWith("BREAKING") ? "breaking" : ""}">${l}</p>`).join("")}</div>`;
+}
+
+function projection() {
+  const a = game.alloc,
+    ev = todayEvent();
+  let dose = a.S ? 0 : 0.25;
+  if (ev?.type === "storm") dose += Math.max(0, 5 - lv("walls") - 2 * a.S);
+  return { air: -4 + 2 * a.L + a.G, food: -2 + (2 + lv("seeds")) * a.G, dose };
+}
+// Little picture of the base. Lights turn on when you give a building power.
+function scene() {
+  const a = game.alloc,
+    ev = todayEvent(),
+    t = ev ? ev.type : "";
+  const lamp = (v, x, y) =>
+    `<circle cx="${x}" cy="${y}" r="5" fill="${v > 0 ? "#ffc933" : "#6b6690"}" stroke="#1e1a3c" stroke-width="2"/>`;
+  const st = 'stroke="#1e1a3c" stroke-width="3" stroke-linejoin="round"';
+  return `<svg class="scene ${t}" viewBox="0 0 600 170" role="img" aria-label="Your Mars outpost">
+    <defs><linearGradient id="sk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2f78"/><stop offset="1" stop-color="#f2a37f"/></linearGradient></defs>
+    <rect width="600" height="170" fill="url(#sk)"/>
+    <circle cx="505" cy="46" r="20" fill="#ffe08a"/>
+    ${t === "storm" ? '<g class="rays" stroke="#ff5a6e" stroke-width="4" stroke-linecap="round"><path d="M505 8v-4M505 84v4M467 46h-5M543 46h5M478 19l-3-3M532 73l3 3M532 19l3-3M478 73l-3 3"/></g>' : ""}
+    <path d="M0 118Q150 88 300 116T600 106V170H0z" fill="#c4553b"/>
+    <path d="M0 142Q200 126 400 142T600 136V170H0z" fill="#8e3a3a"/>
+    <g fill="#62c3ff" ${st}><path d="M24 142l12-18h30l-12 18z"/><path d="M66 142l12-18h30l-12 18z"/><path d="M108 142l12-18h30l-12 18z"/></g>
+    <path d="M195 142a42 42 0 0 1 84 0z" fill="#cfeaff" ${st}/>${lamp(a.L, 237, 128)}
+    <path d="M305 142v-30l26-18 26 18v30z" fill="#9ff0c9" ${st}/><path d="M318 142v-12M331 142v-18M344 142v-10" stroke="#25a06a" stroke-width="3"/>${lamp(a.G, 331, 108)}
+    <path d="M385 142v-20h62v20z" fill="#ffc933" ${st}/>${lamp(a.S, 416, 132)}
+    <rect x="465" y="120" width="42" height="22" fill="#d9d2ff" ${st}/><path d="M486 120V102" ${st}/>${lamp(a.R, 486, 131)}
+    ${t === "dust" ? '<rect width="600" height="170" fill="#b8742f" opacity=".5"/>' : ""}
+  </svg>`;
 }
 
 /* ---------- DRAWING THE SCREEN ---------- */
@@ -910,7 +967,7 @@ function meter(icon, label, value, max, lowWhen) {
   const low = lowWhen(value);
   const shown = Number.isInteger(value) ? value : value.toFixed(1);
   return `<div class="meter ${low ? "low" : ""}">
-    <div class="icon">${icon}</div>
+    <div class="icon">${ic(icon)}</div>
     <div class="bar"><i style="width:${Math.max(0, (value / max) * 100)}%"></i></div>
     <div class="label">${label}: ${shown}</div></div>`;
 }
@@ -923,9 +980,9 @@ function render() {
 
   let eventCard = "";
   if (ev?.type === "storm")
-    eventCard = `<div class="card warn"><h2>☀️ Radiation storm today!</h2><p><b>${ev.data.title}.</b> Radiation hits the base this day. Power the shelter to protect the crew.</p><p class="fact">${ev.data.fact}</p></div>`;
+    eventCard = `<div class="card warn"><h2>Radiation storm today!</h2><p><b>${ev.data.title}.</b> Radiation hits the base this day. Power the shelter to protect the crew.</p><p class="fact">${ev.data.fact}</p></div>`;
   if (ev?.type === "dust")
-    eventCard = `<div class="card warn"><h2>🌪️ ${ev.data.title}!</h2><p>Dust blocks the Sun. Power drops to <b>${p} units</b> today.</p><p class="fact">${ev.data.fact}</p></div>`;
+    eventCard = `<div class="card warn"><h2>${ev.data.title}!</h2><p>Dust blocks the Sun. Power drops to <b>${p} units</b> today.</p><p class="fact">${ev.data.fact}</p></div>`;
 
   const cells = Array.from(
     { length: Math.max(p, CONFIG.normalPower + lv("panels")) },
@@ -933,11 +990,18 @@ function render() {
       `<div class="cell ${i < used() ? "on" : ""} ${i >= p ? "dead" : ""}"></div>`,
   ).join("");
 
+  const sgn = (n) => (n > 0 ? "+" + n : n < 0 ? "−" + Math.abs(n) : "0");
+  const pr = projection();
+  const proj = `<div class="proj"><b>If you run this day:</b>
+    <span class="${pr.air < 0 ? "neg" : "pos"}">${ic("L")} Air ${sgn(pr.air)}</span>
+    <span class="${pr.food < 0 ? "neg" : "pos"}">${ic("food")} Food ${sgn(pr.food)}</span>
+    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Radiation ${sgn(pr.dose)}</span></div>`;
   const systems = SYSTEMS.map(
     (s) => `
-    <div class="system">
-      <div class="icon">${s.icon}</div>
-      <div class="info"><b>${s.name}</b><small>${s.hint}</small></div>
+    <div class="mod m-${s.key}">
+      <div class="mh">${ic(s.key)}<b>${s.name}</b></div>
+      <p class="hint">${s.hint}</p>
+      <div class="slots">${[1, 2, 3, 4].map((i) => `<i class="${i <= game.alloc[s.key] ? "on" : ""}"></i>`).join("")}</div>
       <div class="stepper">
         <button onclick="change('${s.key}',-1)" aria-label="Less power to ${s.name}" ${game.alloc[s.key] === 0 ? "disabled" : ""}>−</button>
         <span>${game.alloc[s.key]}</span>
@@ -950,29 +1014,29 @@ function render() {
   app.innerHTML = `<div class="layout"><aside class="side">${newsPanel()}</aside><div class="center">
     <button class="back" onclick="quitMission()">◀ Menu</button>
     ${mobileMsg()}
-    <h1>🚀 Mars Outpost</h1>
+    <h1>Mars Outpost</h1>
     <p class="sub">Keep your crew alive for ${CONFIG.totalSols} days on Mars.</p>
-    <div class="card">
+    <div class="card hud">
       <div class="progress"><i style="width:${(game.sol / CONFIG.totalSols) * 100}%"></i></div>
       <p class="fact">Day ${game.sol} of ${CONFIG.totalSols} · Research points: <b>${game.science}</b></p>
       <div class="meters">
-        ${meter("💨", "Air", game.air, game.maxStock, (v) => v <= 3)}
-        ${meter("🍎", "Food", game.food, game.maxStock, (v) => v <= 3)}
-        ${meter("☢️", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
+        ${meter("L", "Air", game.air, game.maxStock, (v) => v <= 3)}
+        ${meter("food", "Food", game.food, game.maxStock, (v) => v <= 3)}
+        ${meter("dose", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
       </div>
       <p class="fact">Radiation dose never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>
     </div>
     ${game.report ? `<div class="card news">${game.report}</div>` : ""}
     ${forecastStrip()}
-    ${game.penalty[game.sol] ? `<div class="card warn"><h2>🔧 Damage from yesterday</h2><p>Broken equipment means <b>${game.penalty[game.sol]} less power</b> today.</p></div>` : ""}
+    ${game.penalty[game.sol] ? `<div class="card warn"><h2>Damage from yesterday</h2><p>Broken equipment means <b>${game.penalty[game.sol]} less power</b> today.</p></div>` : ""}
     ${eventCard}
     <div class="card">
-      <h2>⚡ Power: ${used()} of ${p} units</h2>
+      ${scene()}<h2>Power: ${used()} of ${p} units</h2>
       <div class="cells">${cells}</div>
-      ${systems}
-      <p class="fact">📡 Messages from Earth take about ${DELAYS[game.sol % 4]} to arrive, so you decide.</p>
+      <div class="mods">${systems}</div>${proj}
+      <p class="fact">Messages from Earth take about ${DELAYS[game.sol % 4]} to arrive, so you decide.</p>
       <div class="acts">${quizCard()}${roverButton()}</div>
-      ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">🔋 Use battery pack (+3 power today)</button>` : ""}
+      ${game.battery > 0 && game.batteryDay !== game.sol ? `<button class="item" onclick="useBattery()">${ic("battery")} Use battery pack (+3 power today)</button>` : ""}
       <button class="go" onclick="runSol()">Run Day ${game.sol} ▶</button>
     </div></div><aside class="side">${messagePanel()}</aside></div>`;
 }
@@ -980,22 +1044,22 @@ function render() {
 function renderEnd() {
   app.className = "";
   const msg = {
-    win: `🎉 You made it! ${game.science} research points.`,
-    air: "💨 The air ran out.",
-    food: "🍎 The food ran out.",
-    dose: "☢️ The crew reached the radiation limit and had to go home.",
+    win: `You made it! ${game.science} research points.`,
+    air: "The air ran out.",
+    food: "The food ran out.",
+    dose: "The crew reached the radiation limit and had to go home.",
   }[game.result];
   app.innerHTML = `
     <h1>${msg}</h1>
     <div class="card"><h2>What you learned</h2>
-      <p>🔋 <b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
-      <p>☢️ <b>Space weather matters.</b> Mission planners watch NASA’s DONKI database for flares, then decide when to shelter.</p>
-      <p>🌪️ <b>Mars can surprise you.</b> Dust storms cut solar power, like the one in 2018 that stopped the Opportunity rover.</p>
-      <p>📡 <b>Help is far away.</b> Signals between Earth and Mars take 3 to 22 minutes, so crews decide on their own.</p>
+      <p><b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
+      <p><b>Space weather matters.</b> Mission planners watch NASA’s DONKI database for flares, then decide when to shelter.</p>
+      <p><b>Mars can surprise you.</b> Dust storms cut solar power, like the one in 2018 that stopped the Opportunity rover.</p>
+      <p><b>Help is far away.</b> Signals between Earth and Mars take 3 to 22 minutes, so crews decide on their own.</p>
     </div>
-    <div class="card news"><h2>🔬 You earned ${game.earned} research points!</h2>
+    <div class="card news"><h2>You earned ${game.earned} research points!</h2>
       <p>${game.science} from science${game.result === "win" ? " + 10 for surviving" : ""}. You now have <b>${save.points}</b> to spend.</p></div>
-    <button class="go" onclick="showMenu()">Upgrade menu 🔧</button>
+    <button class="go" onclick="showMenu()">Upgrade menu </button>
     <button class="go alt" onclick="startMission()">Play again now</button>
     <button class="go alt" onclick="showMain()">◀ Main menu</button>`;
 }
