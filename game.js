@@ -1525,4 +1525,176 @@ function renderEnd() {
     <button class="go alt" onclick="showMain()">◀ Main menu</button>`;
 }
 
+/* ---------- ANIMATION EXTRAS (safe to delete: the game works without it) ---------- */
+(function () {
+  const reduce =
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $$ = (sel) => Array.from(app.querySelectorAll(sel));
+  let enterTimer = 0;
+
+  // Confetti for wins and discoveries
+  function confetti(n) {
+    if (reduce) return;
+    const wrap = document.createElement("div");
+    wrap.className = "confetti";
+    const cols = ["#ffc933", "#35d8a0", "#62c3ff", "#ff8fa0", "#c4553b"];
+    for (let i = 0; i < n; i++) {
+      const s = document.createElement("i");
+      s.style.cssText =
+        `--x:${Math.random() * 100}vw;--dx:${(Math.random() - 0.5) * 30}vw;` +
+        `--r:${Math.random() * 720}deg;--d:${1.6 + Math.random() * 1.6}s;` +
+        `--w:${Math.random() * 0.6}s;background:${cols[i % cols.length]}`;
+      wrap.appendChild(s);
+    }
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.remove(), 4000);
+  }
+
+  // Slide the screen's cards in one after another
+  function stagger() {
+    if (reduce) return;
+    $$(":scope > :not(.layout), .col > *, .topbar").forEach((el) => {
+      const i = Array.prototype.indexOf.call(el.parentNode.children, el);
+      el.style.setProperty("--i", Math.min(7, i));
+    });
+    $$(".chk").forEach((el, i) => el.style.setProperty("--i", i));
+    $$(".debrief li").forEach((el, i) => el.style.setProperty("--i", i));
+    app.classList.add("enter");
+    clearTimeout(enterTimer);
+    enterTimer = setTimeout(() => app.classList.remove("enter"), 1400);
+  }
+
+  // Looping animations restart on every redraw. This keeps them in step so they do not jump.
+  const SYNC = [
+    ".rays",
+    '.scene circle[cx="505"]',
+    '.scene.dust rect[fill="#b8742f"]',
+    ".ftile.storm .ic",
+    ".ftile.dust .ic",
+    ".card.warn",
+    ".dot",
+    ".hotnote",
+    ".col button.go:not(:disabled):not(.alt)",
+    ".meter.low .icon",
+  ].join(",");
+  function sync() {
+    if (reduce) return;
+    $$(SYNC).forEach((el) => {
+      const cs = getComputedStyle(el);
+      if (cs.animationIterationCount.indexOf("infinite") < 0) return;
+      const d = parseFloat(cs.animationDuration) * 1000;
+      if (d) el.style.animationDelay = -(performance.now() % d) + "ms";
+    });
+  }
+
+  // ----- Game screen -----
+  let last = { g: null };
+  const origRender = window.render;
+  window.render = function () {
+    const same = last.g === game;
+    const barsBefore = same
+      ? $$(".meter .bar i, .progress i").map((b) => b.style.width)
+      : [];
+    const stepsBefore = $$(".stepper span").map((s) => s.textContent);
+    const onBefore = $$(".cell.on").length;
+
+    origRender.apply(this, arguments);
+
+    const g = game;
+    const sameDay = same && last.sol === g.sol;
+    if (!reduce) {
+      if (!same || !sameDay || (g.result && !last.result)) stagger();
+
+      if (same && !g.result) {
+        // Bars slide from their old value to the new one
+        const now = $$(".meter .bar i, .progress i");
+        if (now.length === barsBefore.length)
+          now.forEach((b, i) => {
+            const to = b.style.width;
+            b.style.width = barsBefore[i];
+            void b.offsetWidth;
+            b.style.width = to;
+          });
+        // Meters flash when they change
+        const m = $$(".meter");
+        const vals = [g.air, g.food, g.dose];
+        const prev = [last.air, last.food, last.dose];
+        vals.forEach((v, i) => {
+          if (m[i] && prev[i] !== undefined && v !== prev[i]) {
+            const better = i === 2 ? v < prev[i] : v > prev[i];
+            m[i].classList.add(better ? "gain" : "loss");
+          }
+        });
+        // Power cells and stepper numbers react to the player's clicks
+        if (sameDay) {
+          $$(".stepper span").forEach((s, i) => {
+            if (
+              stepsBefore[i] !== undefined &&
+              stepsBefore[i] !== s.textContent
+            )
+              s.classList.add("pop");
+          });
+          $$(".cell.on").forEach((c, i) => {
+            if (i >= onBefore) c.classList.add("fresh");
+          });
+        }
+      }
+    }
+
+    if (g.result === "win" && !g.celebrated) {
+      g.celebrated = true;
+      confetti(60);
+    }
+    last = {
+      g,
+      sol: g.sol,
+      result: g.result,
+      air: g.air,
+      food: g.food,
+      dose: g.dose,
+    };
+    sync();
+  };
+
+  // ----- Pop-ups -----
+  const origPopup = window.popup;
+  window.popup = function (html) {
+    const box = origPopup.call(this, html);
+    const al = box.querySelector(".alert");
+    if (!al) return box;
+    if (!reduce) {
+      [".rep li", ".chips .chip", ".choice"].forEach((sel) =>
+        Array.from(box.querySelectorAll(sel)).forEach((el, i) =>
+          el.style.setProperty("--i", i),
+        ),
+      );
+      if (al.querySelector("li.bad, .g-bad")) al.classList.add("shake");
+      if (html.indexOf("Discovery!") >= 0) setTimeout(() => confetti(26), 450);
+    }
+    // Emergency countdown: tick each second, glow red in the last 3 seconds
+    const num = box.querySelector(".timer ~ .count b");
+    if (num)
+      new MutationObserver(() => {
+        num.classList.remove("tick");
+        void num.offsetWidth;
+        num.classList.add("tick");
+        if (+num.textContent <= 3) al.classList.add("urgent");
+      }).observe(num, { childList: true, characterData: true, subtree: true });
+    return box;
+  };
+
+  // ----- Menu screens -----
+  ["showMain", "showMenu", "showHow"].forEach((name) => {
+    const orig = window[name];
+    window[name] = function (a) {
+      const r = orig.apply(this, arguments);
+      last = { g: null };
+      // Buying or packing redraws the menu. Do not replay the entrance for that.
+      if (!(name === "showMenu" && a === true)) stagger();
+      return r;
+    };
+  });
+})();
+
 showMain();
