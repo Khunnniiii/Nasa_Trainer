@@ -1,62 +1,58 @@
 /* ============================================================
-   MARS OUTPOST – game logic (real-data version)
+   MARS OUTPOST – game logic (less reading, more doing)
    Storm days come from NASA DONKI (archive.js + real-data.js).
    Quiet days can get GAME events, always labelled as not from NASA.
    Emergencies can ask Earth: the signal delay is computed (delay.js).
-   Edit the CONFIG section to change balance and text.
+   Rules unlock one mission at a time (see the "From" settings).
    ============================================================ */
 
 /* ---------- CONFIG: tweak the game here ---------- */
 const CONFIG = {
   daysPerStep: 10, // Mission 1 = 10 days, Mission 2 = 20, Mission 3 = 30 ...
   maxLevel: 5, // last mission tier (5 = 60 days). Replay it for stars.
-  normalPower: 8, // power units on a normal day
-  dustPower: 4, // power units on a dust storm day (gets lower on harder missions)
+  normalPower: 8,
+  dustPower: 4, // power on a dust day (lower on harder missions)
   startAir: 8,
   startFood: 8,
   maxStock: 12,
   crewAir: 6, // air the crew uses each day
   crewFood: 2, // food the crew eats each day
   doseLimit: 10, // reach this and the crew goes home
-  emergencyTime: 12, // seconds to decide on Mission 1 (shorter on harder missions)
-  starScience: 2, // research points per day needed for the science star
-  baseCargoSlots: 2, // how many upgrades/items fit in the rocket
-  dustRate: 0.12, // dust storms are GAME events (no dust data in the archive yet)
+  emergencyTime: 12, // seconds to decide on Mission 3 (shorter later)
+  starScience: 2, // research per day needed for the science star
+  baseCargoSlots: 2,
+  dustRate: 0.12, // dust storms are GAME events
   emergencyRate: 0.15,
-  rateGrowth: 0.01, // how much those rates grow per mission level
+  rateGrowth: 0.01,
   lookAhead: 2, // days of forecast you can see
   lookAheadSat: 4, // with the early-warning satellite
 
-  // Quiet-day GAME events (not from NASA data)
-  maxQuietRun: 2, // never more than this many days in a row with nothing happening
-  fillerEvery: 5, // at most one filler event per this many days
-  burstDose: 2, // radiation of a surprise particle burst (before shelter)
-  dentAir: 2, // air lost to a micrometeorite dent if not repaired
-  bloomFood: 3, // extra food from a plant bloom
-  bloomNeed: 2, // greenhouse power needed to harvest the bloom
+  // Which mission level each rule starts at (0 = Mission 1)
+  dustFrom: 1,
+  batteryFrom: 1,
+  emergencyFrom: 2,
+  evaFrom: 2,
 
-  // Battery: power stored today arrives tomorrow
-  batteryFrom: 1, // first mission level that has it (1 = Mission 2)
+  // Quiet-day GAME events (not from NASA data)
+  maxQuietRun: 2, // never more than this many quiet days in a row
+  fillerEvery: 5, // at most one filler event per this many days
+  burstDose: 2,
+  dentAir: 2,
+  bloomFood: 3,
+  bloomNeed: 2,
+
   batteryCap: 3, // most power you can store in one day
 
-  // Spacewalks (EVA): big research, but no shelter outside
-  evaFrom: 2, // first mission level that has it (2 = Mission 3)
   evaBase: 2, // spacewalks per mission when they unlock
-  evaScience: 4, // research points brought back
-  evaDose: 0.5, // radiation just for being outside
+  evaScience: 4,
+  evaDose: 0.5,
 
-  // Consequences
-  strainDays: 2, // days in a row at full power before a system overheats
-  strainPenalty: 2, // power lost the day after an overheat
-  tiredPenalty: 1, // power lost the day after the crew runs low on air or food
-  lowStock: 2, // air or food at or below this makes the crew tired
   discoveryEvery: 6, // research points per discovery
-  maxDiscoveries: 2, // each discovery gives +1 power for the rest of the mission
+  maxDiscoveries: 2, // each gives +1 power for the rest of the mission
 };
 
 const RANKS = ["Rookie", "Cadet", "Pilot", "Commander", "Captain", "Legend"];
 
-// Everything that depends on the mission level lives here.
 function tierInfo(lvl) {
   const t = Math.min(Math.max(0, lvl), CONFIG.maxLevel);
   const days = CONFIG.daysPerStep * (t + 1);
@@ -65,10 +61,19 @@ function tierInfo(lvl) {
     level: t,
     days,
     rank: RANKS[t] || "Legend",
-    dusts: Math.max(1, Math.round(days * (CONFIG.dustRate + g))),
-    emergencies: Math.max(1, Math.round(days * (CONFIG.emergencyRate + g))),
-    dust: Math.max(2, CONFIG.dustPower - Math.floor(t / 2)), // power on dust days
-    time: Math.max(6, CONFIG.emergencyTime - t), // emergency timer
+    dusts:
+      t >= CONFIG.dustFrom
+        ? Math.max(1, Math.round(days * (CONFIG.dustRate + g)))
+        : 0,
+    emergencies:
+      t >= CONFIG.emergencyFrom
+        ? Math.max(1, Math.round(days * (CONFIG.emergencyRate + g)))
+        : 0,
+    dust: Math.max(2, CONFIG.dustPower - Math.floor(t / 2)),
+    time: Math.max(
+      6,
+      CONFIG.emergencyTime - Math.max(0, t - CONFIG.emergencyFrom),
+    ),
   };
 }
 const missionDays = (lvl) => tierInfo(lvl).days;
@@ -82,27 +87,31 @@ const evaSlotsFor = (lvl) =>
     ? CONFIG.evaBase + Math.floor((lvl - CONFIG.evaFrom) / 2)
     : 0;
 
-// The things the player powers (the battery is added separately in render()).
+// The four things the player powers. "short" is the one word on the tile.
 const SYSTEMS = [
   {
     key: "L",
     name: "Life support",
-    hint: `Makes air. The crew breathes ${CONFIG.crewAir} air a day and each unit makes 2.`,
+    short: "Air",
+    hint: `Makes air. The crew breathes ${CONFIG.crewAir} a day and each unit makes 2.`,
   },
   {
     key: "G",
     name: "Greenhouse",
-    hint: `Each unit grows 2 food and 1 air. The crew eats ${CONFIG.crewFood} food a day.`,
+    short: "Food",
+    hint: `Each unit grows 2 food and 1 air. The crew eats ${CONFIG.crewFood} a day.`,
   },
   {
     key: "S",
     name: "Storm shelter",
+    short: "Shield",
     hint: "Each unit blocks 2 radiation in a storm. With no shelter you also take a little radiation every day.",
   },
   {
     key: "R",
     name: "Science lab",
-    hint: "Earns research points. Nothing else.",
+    short: "Lab",
+    hint: "Earns research points.",
   },
 ];
 
@@ -125,79 +134,66 @@ const HISTORY = [
     fact: "Charged particles from the Sun can arrive within hours, so warning time can be short.",
   },
 ];
-const DUST = {
-  title: "Mars dust storm",
-  fact: "In 2018 a global dust storm blocked so much sunlight that NASA’s Opportunity rover lost power.",
-};
+const DUST_FACT =
+  "In 2018 a global dust storm blocked so much sunlight that NASA’s Opportunity rover lost power.";
 
-// Quiet-day GAME events. Not NASA data, and always labelled that way.
 const GAME_TAG = "Game event, not from NASA’s log";
-const GAME_EVENT_KINDS = ["burst", "dent", "bloom"];
 
-// Emergencies (game events, not NASA data). Each answer costs a DIFFERENT kind of thing,
-// so the cheapest answer depends on your supplies. effect can change: air, food, dose, science, powerNext.
-// minutes = how long the emergency lasts in story time (the countdown is a sped-up version of this).
+// Emergencies (game events). Each answer costs a DIFFERENT kind of thing.
+// minutes = story time the emergency lasts (the countdown is a sped-up version).
 const EMERGENCIES = [
   {
     title: "Air leak!",
-    text: "A hissing sound! A small crack is letting air escape.",
+    icon: "L",
     minutes: 30,
     choices: [
       {
-        label: "Patch it from inside",
+        label: "Patch it inside",
         effect: { powerNext: -2 },
-        result:
-          "The crack is sealed. The crew was busy all night, so power is lower tomorrow.",
-        lesson:
-          "A repair that takes crew time is paid for in power and work later.",
+        result: "Sealed! The crew was busy all night.",
+        lesson: "A repair that takes crew time is paid for in power later.",
       },
       {
-        label: "Close the door to that room",
+        label: "Close the door",
         effect: { air: -3 },
-        result: "The leak is cut off, but the air in that room is gone.",
-        lesson:
-          "Sealing a room stops the problem spreading, but costs the air inside it.",
+        result: "The leak is cut off, but that room’s air is gone.",
+        lesson: "Sealing a room stops the problem, but costs the air inside.",
       },
       {
-        label: "Fix it from outside",
+        label: "Fix it outside",
         effect: { dose: 1, science: -1 },
-        result:
-          "The crack is fixed from outside, but the crew was exposed for a while.",
+        result: "Fixed from outside, but the crew was exposed.",
         lesson:
-          "Going outside saves air, and costs radiation that never goes away.",
+          "Going outside saves air and costs radiation that never goes away.",
       },
     ],
     timeout: {
       effect: { air: -5 },
-      result: "Nobody acted, so a lot of air escaped.",
+      result: "Nobody acted. A lot of air escaped.",
       lesson: "In an emergency, a quick plan beats no plan.",
     },
   },
   {
-    title: "Greenhouse pump broke!",
-    text: "The water pump stopped. The plants are getting thirsty.",
+    title: "Pump broke!",
+    icon: "G",
     minutes: 45,
     choices: [
       {
-        label: "Swap in the spare part",
+        label: "Fit the spare part",
         effect: { powerNext: -2 },
-        result:
-          "The pump works again. Fitting it took the crew's whole evening.",
-        lesson:
-          "Missions carry spare parts because help is far away. Fitting them takes time.",
+        result: "The pump works again. Fitting it took all evening.",
+        lesson: "Missions carry spare parts because help is far away.",
       },
       {
-        label: "Water the plants by hand",
+        label: "Water by hand",
         effect: { food: -3 },
-        result:
-          "Some plants made it, but others wilted before you got to them.",
+        result: "Some plants made it. Others wilted.",
         lesson: "A workaround works, but some of the harvest is lost.",
       },
       {
-        label: "Share the crew’s water",
+        label: "Share crew water",
         effect: { air: -2, food: -1 },
-        result:
-          "The plants drank the crew's water. The air makers had less to work with.",
+        result: "The plants drank. The air makers had less water.",
         lesson: "On a base, water, air and food are all connected.",
       },
     ],
@@ -208,28 +204,27 @@ const EMERGENCIES = [
     },
   },
   {
-    title: "Dusty solar panels!",
-    text: "Dust covers the solar panels and power is dropping.",
+    title: "Dusty panels!",
+    icon: "panels",
     minutes: 60,
     choices: [
       {
-        label: "Clean them with the robot arm",
+        label: "Robot arm cleans",
         effect: { science: -2, powerNext: -1 },
-        result: "The robot cleaned the panels, but it used power and lab time.",
+        result: "Clean panels, but the robot used power and lab time.",
         lesson:
-          "Robots can do dusty jobs without risking the crew, but they use power too.",
+          "Robots do dusty jobs without risking the crew, but they use power.",
       },
       {
-        label: "Wipe them by hand (spacewalk)",
+        label: "Wipe by hand",
         effect: { dose: 1 },
-        result: "Clean panels, but the crew spent time in the open.",
+        result: "Clean panels. The crew spent time in the open.",
         lesson: "Spacewalks mean more radiation and more risk.",
       },
       {
-        label: "Run the backup generator",
+        label: "Backup generator",
         effect: { air: -3 },
-        result:
-          "Power is covered for now, but the generator used up some of the air supply.",
+        result: "Power is covered, but the generator used up air.",
         lesson: "Backups work, but they spend something else.",
       },
     ],
@@ -241,7 +236,7 @@ const EMERGENCIES = [
   },
 ];
 
-// Daily "question from Earth". Put the right answer in "right"; answers are shuffled when shown.
+// Optional quiz. Put the right answer in "right"; answers are shuffled when shown.
 const QUIZ = [
   {
     q: "How long does a message take to travel one way between Earth and Mars?",
@@ -293,7 +288,7 @@ const QUIZ = [
   },
 ];
 
-/* ---------- ICONS (simple line icons, edit paths freely) ---------- */
+/* ---------- ICONS (simple line icons) ---------- */
 const ICON = {
   L: '<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
   G: '<path d="M12 21v-9M12 12C12 7 8 5 4 5c0 5 3 7 8 7zM12 14c0-4 3-6 8-6 0 5-3 7-8 6z"/>',
@@ -312,11 +307,14 @@ const ICON = {
     '<rect x="9" y="9" width="6" height="6" rx="1"/><path d="M3 11l4-4 3 3-4 4zM21 13l-4 4-3-3 4-4zM12 9V5"/>',
   battery:
     '<rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M7 10v4M11 10v4"/>',
-  rover:
-    '<circle cx="7" cy="17" r="2.5"/><circle cx="17" cy="17" r="2.5"/><path d="M4 14h16l-2-5h-6l-1-3H8l1 3H6z"/>',
   eva: '<circle cx="12" cy="10" r="6"/><path d="M8.5 10h7M5 21c1-3.5 4-5 7-5s6 1.5 7 5"/>',
   earth:
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3.5 3 3.5 15 0 18M12 3c-3.5 3-3.5 15 0 18"/>',
+  check: '<path d="M5 13l4 4L19 7"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  quiz: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01"/>',
+  undo: '<path d="M4 8h10a6 6 0 0 1 0 12H8M4 8l4-4M4 8l4 4"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
 };
 ICON.panels = ICON.sun;
 ICON.seeds = ICON.G;
@@ -326,7 +324,7 @@ const AVC = ["#62c3ff", "#35d8a0", "#ffc933", "#ff8fa0"];
 
 /* ---------- DARK / LIGHT MODE ---------- */
 const THEME_KEY = "marsOutpostTheme";
-let theme = "dark"; // default. Change to "light" if you prefer
+let theme = "dark";
 try {
   theme = localStorage.getItem(THEME_KEY) || theme;
 } catch (e) {}
@@ -353,33 +351,30 @@ setTheme(theme, false);
 let game = null;
 const app = document.getElementById("app");
 
-/* ---------- COLLAPSIBLE SECTIONS (stay open/closed after re-render) ---------- */
 const setUI = (k, v) => {
   if (game) game.ui[k] = v;
 };
-// Small "tap to read more" link inside a card
 const more = (key, title, body) =>
   `<details class="more" ${game.ui[key] ? "open" : ""} ontoggle="setUI('${key}',this.open)"><summary>${title}</summary>${body}</details>`;
-// A whole card that opens and closes
 const fold = (key, title, body, badge = "") =>
   `<details class="card fold" ${game.ui[key] ? "open" : ""} ontoggle="setUI('${key}',this.open)"><summary>${title}${badge}</summary><div class="body">${body}</div></details>`;
 
-/* ---------- SAVE DATA (stays in the browser between missions) ---------- */
+/* ---------- SAVE DATA ---------- */
 const SAVE_KEY = "marsOutpostSave";
 const freshSave = () => ({
   points: 0,
-  up: {}, // upgrades you own: { key: level }
-  items: {}, // one-mission items you bought: { key: 1 }
-  cargo: [], // what is packed for the next mission
-  level: 0, // which mission you are on (0 = Mission 1)
-  stars: {}, // best stars per mission level
-  lastStart: {}, // archive day the last mission of each level started on (so a retry is different)
+  up: {},
+  items: {},
+  cargo: [],
+  level: 0,
+  stars: {},
+  lastStart: {},
+  tips: {}, // which one-time tips the player has already seen
 });
 let save = freshSave();
 try {
   const t = JSON.parse(localStorage.getItem(SAVE_KEY));
   if (t) {
-    // The old one-mission battery pack became a built-in battery. Refund it.
     const items = Object.assign({}, t.items || {});
     let refund = 0;
     if (items.battery) {
@@ -394,6 +389,7 @@ try {
       level: Math.min(CONFIG.maxLevel, t.level || 0),
       stars: t.stars || {},
       lastStart: t.lastStart || {},
+      tips: t.tips || {},
     };
   }
 } catch (e) {}
@@ -402,11 +398,9 @@ const persist = () => {
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch (e) {}
 };
-const owned = (k) => save.up[k] || 0; // level you own (used in menus)
-// Level that counts in a mission: only upgrades packed in the rocket work!
+const owned = (k) => save.up[k] || 0;
 const lv = (k) => (game && game.cargo && game.cargo.includes(k) ? owned(k) : 0);
 
-// Permanent upgrades. costs = price of each level.
 const UPGRADES = [
   {
     key: "panels",
@@ -439,7 +433,6 @@ const UPGRADES = [
     costs: [8, 16],
   },
 ];
-// One-mission items. Used up when the mission starts.
 const ITEMS = [
   {
     key: "warning",
@@ -495,18 +488,17 @@ function newGame() {
   const cargo = [...save.cargo];
   const L = (k) => (cargo.includes(k) ? owned(k) : 0);
 
-  // One-mission items are used up now
   ITEMS.forEach((it) => {
     if (cargo.includes(it.key)) save.items[it.key] = 0;
   });
   save.cargo = cargo.filter((k) => !isItem(k));
 
-  // The mission replays consecutive REAL days from the archive. A retry draws a different stretch.
+  // Consecutive REAL days from the archive. A retry draws a different stretch.
   const M = RealData.mission(tier.level, { avoid: save.lastStart[tier.level] });
   save.lastStart[tier.level] = M.start;
   persist();
 
-  // Dust storms are GAME events (no dust data in the archive). Never day 1, never back to back.
+  // Dust storms (GAME events). Never day 1, never back to back. None before CONFIG.dustFrom.
   const dust = {};
   let placed = 0,
     tries = 0;
@@ -518,21 +510,24 @@ function newGame() {
     }
   }
 
-  // Surprise emergencies on random days (never day 1). Also game events.
+  // Emergencies (GAME events). None before CONFIG.emergencyFrom.
   const emergencies = {};
   const order = EMERGENCIES.map((_, i) => i).sort(() => Math.random() - 0.5);
-  let n = 0;
-  while (Object.keys(emergencies).length < tier.emergencies) {
+  let n = 0,
+    guard = 0;
+  while (Object.keys(emergencies).length < tier.emergencies && guard++ < 500) {
     const d = 2 + Math.floor(Math.random() * (days - 1));
     if (!emergencies[d])
       emergencies[d] = EMERGENCIES[order[n++ % EMERGENCIES.length]];
   }
 
-  // Quiet-day GAME events. A day is "busy" if it has a real storm, dust or an emergency.
-  // If a third quiet day in a row would happen, that day gets a game event instead.
-  // Never day 1, and no more than one per CONFIG.fillerEvery days.
+  // Quiet-day GAME events. Early missions only use the two that need no new button.
+  const kindsAll =
+    tier.level >= CONFIG.dustFrom
+      ? ["burst", "dent", "bloom"]
+      : ["burst", "bloom"];
   const extra = {};
-  const kinds = [...GAME_EVENT_KINDS].sort(() => Math.random() - 0.5);
+  const kinds = [...kindsAll].sort(() => Math.random() - 0.5);
   const cap = Math.ceil(days / CONFIG.fillerEvery);
   let quietRun = 0,
     ki = 0;
@@ -564,57 +559,55 @@ function newGame() {
     food: CONFIG.startFood + 2 * L("tanks"),
     maxStock: CONFIG.maxStock + 2 * L("tanks"),
     bonus: {}, // power added or removed on a given day (battery, bot, spacewalk)
-    carry: {}, // power that arrived from the battery, for the display
+    carry: {},
     quizOrder: QUIZ.map((_, i) => i).sort(() => Math.random() - 0.5),
     quizOpts: {},
     quizRes: {},
     warning: cargo.includes("warning"),
     dose: 0,
     science: 0,
-    alloc: emptyPlan(), // starts empty every day: no autopilot!
+    alloc: emptyPlan(),
+    lastPlan: null, // yesterday's plan, for "Same as yesterday"
+    pick: null, // day tapped in the sky strip
     dust,
     emergencies,
-    extra, // quiet-day game events: { day: "burst" | "dent" | "bloom" }
-    repair: {}, // days the repair bot was sent
-    eva: {}, // days the crew goes on a spacewalk
+    extra,
+    repair: {},
+    eva: {},
     evaUsed: 0,
     evaSlots: evaSlotsFor(tier.level),
-    penalty: {}, // power lost on a given day
-    penaltyWhy: {}, // the reasons, so the player learns the cause
-    strain: emptyPlan(), // days in a row each system ran at full power
+    penalty: {},
+    penaltyWhy: {},
     discoveries: 0,
-    log: [], // good and bad moments for the end-of-mission debrief
-    ui: {}, // which collapsible sections are open
+    log: [],
+    ui: {},
     result: null,
   };
   render();
 }
 
 /* ---------- RULES ---------- */
-// Real days: day N of the mission is the N-th consecutive day of the archived window.
 const dateOf = (d) => RealData.fmtD(game.M.date(d - 1));
 const shortDate = (d) => dateOf(d).split(" ").slice(0, 2).join(" ");
-// "YYYY-MM-DD" for mission day d (used by the signal-delay calculation)
 function isoOf(d) {
   const v = game.M.date(d - 1);
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v).slice(0, 10);
 }
 const fmtMin = (m) => (m >= 10 ? String(Math.round(m)) : m.toFixed(1));
-// One-way Earth to Mars signal time (minutes) on mission day d, or null if delay.js is missing
 const oneWayMin = (d = game.sol) =>
   window.Delay ? Delay.oneWayMin(isoOf(d)) : null;
-// Storm strength (0-4) on mission day d, from the archive (predicted CME arrival at Mars)
 const stormLevel = (d = game.sol) => game.M.levelOf("mars", d - 1);
 const stormDose = (d = game.sol) => game.M.dose("mars", d - 1);
 const dustToday = () => !!game.dust[game.sol];
-const todayEvent = () => (dustToday() ? { type: "dust" } : null);
 const gameEventToday = () => game.extra[game.sol] || null;
 const lookAhead = () => (game.warning ? CONFIG.lookAheadSat : CONFIG.lookAhead);
 const forecast = () =>
   game.M.forecast("mars", game.sol - 1, { horizon: 3, precise: game.warning });
 const batteryOn = () => game.level >= CONFIG.batteryFrom;
-const isOut = () => !!game.eva[game.sol]; // crew on a spacewalk today
+const isOut = () => !!game.eva[game.sol];
+const tmrStorm = () =>
+  game.sol < game.total && forecast().some((x) => x.offset === 1);
 
 const power = () =>
   Math.max(
@@ -632,15 +625,14 @@ function addPenalty(day, n, why) {
   (game.penaltyWhy[day] = game.penaltyWhy[day] || []).push(why);
 }
 
-// Shelter power needed to block a storm of a given radiation, and what gets through today
 const needFor = (dose) =>
   Math.min(4, Math.ceil(Math.max(0, dose - lv("walls")) / 2));
 const shelterNeed = () => needFor(stormDose());
 const stormHit = (shelter) =>
   Math.max(0, stormDose() - lv("walls") - 2 * shelter);
-// Without the satellite you do not know how strong the storm is
-const needRange = () =>
-  `${needFor(RealData.DOSE[1])} to ${needFor(RealData.DOSE[4])}`;
+const needLo = () => needFor(RealData.DOSE[1]);
+const needHi = () => needFor(RealData.DOSE[4]);
+const needRange = () => `${needLo()} to ${needHi()}`;
 
 function change(key, delta) {
   const next = game.alloc[key] + delta;
@@ -651,15 +643,31 @@ function change(key, delta) {
   render();
 }
 
-// Micrometeorite dent: send the repair bot (costs 1 power today)
-function sendBot() {
-  if (used() >= power() || game.repair[game.sol]) return;
-  game.repair[game.sol] = true;
-  game.bonus[game.sol] = (game.bonus[game.sol] || 0) - 1; // the bot uses 1 power
+// One tap: copy yesterday's plan, trimmed to today's power
+function sameAsYesterday() {
+  if (!game.lastPlan || used() > 0) return;
+  let free = power();
+  const lastDay = game.sol >= game.total;
+  for (const k of ["L", "G", "S", "R", "B"]) {
+    if (k === "B" && (!batteryOn() || lastDay)) continue;
+    const v = Math.min(
+      game.lastPlan[k] || 0,
+      free,
+      k === "B" ? CONFIG.batteryCap : 4,
+    );
+    game.alloc[k] = v;
+    free -= v;
+  }
   render();
 }
 
-// Spacewalk: costs 1 power today. Can be cancelled before the day runs.
+function sendBot() {
+  if (used() >= power() || game.repair[game.sol]) return;
+  game.repair[game.sol] = true;
+  game.bonus[game.sol] = (game.bonus[game.sol] || 0) - 1;
+  render();
+}
+
 function toggleEva() {
   const d = game.sol;
   if (game.eva[d]) {
@@ -673,20 +681,30 @@ function toggleEva() {
   render();
 }
 
+function pickDay(d) {
+  game.pick = d;
+  render();
+}
+
 // ----- Emergencies: what each answer costs, and which is cheapest right now -----
-const costOf = (e) => {
-  const p = [];
-  if (e.air) p.push(`Lose ${-e.air} air`);
-  if (e.food) p.push(`Lose ${-e.food} food`);
-  if (e.dose) p.push(`Gain ${e.dose} radiation`);
-  if (e.science) p.push(`Lose ${-e.science} research`);
-  if (e.powerNext) p.push(`${-e.powerNext} less power tomorrow`);
-  return p.join(", ");
+const COSTICON = {
+  air: "L",
+  food: "food",
+  dose: "dose",
+  science: "R",
+  powerNext: "bolt",
 };
+const costChips = (e) =>
+  Object.keys(e)
+    .map((k) => {
+      const v = e[k],
+        bad = k === "dose" ? v > 0 : v < 0;
+      return `<span class="cc ${bad ? "minus" : "plus"}">${ic(COSTICON[k])}<b>${v > 0 ? "+" : "−"}${Math.abs(v)}</b>${k === "powerNext" ? "<small>next day</small>" : ""}</span>`;
+    })
+    .join("");
 const tomorrowTight = () =>
   game.sol < game.total &&
   (stormLevel(game.sol + 1) > 0 || !!game.dust[game.sol + 1]);
-// "Harm" is the game's own scale. Scarce supplies, a high dose or a busy tomorrow make a cost hurt more.
 function harmOf(e) {
   const stock = (v) => (v >= 9 ? 0.5 : v >= 5 ? 1 : 2);
   const pw = tomorrowTight() ? 2 : 1;
@@ -701,9 +719,8 @@ function harmOf(e) {
 const recommend = (em) =>
   em.choices.reduce((b, c) => (harmOf(c.effect) < harmOf(b.effect) ? c : b));
 
-// Called when the player presses Run Day. Asks first if the plan is risky.
 function runSol() {
-  if (used() < power()) return; // all power must be assigned
+  if (used() < power()) return;
   const lvl = stormLevel(),
     need = shelterNeed(),
     S = game.alloc.S,
@@ -711,11 +728,12 @@ function runSol() {
   const risky = lvl > 0 && (out || (game.warning ? S < need : S === 0));
   if (risky) {
     const msg = out
-      ? `A storm cloud reaches Mars today and your crew is going on a spacewalk. Outside, the shelter and walls cannot protect them.`
+      ? "Storm today, and the crew is outside!"
       : game.warning
-        ? `A <b>${RealData.NAMES[lvl]}</b> storm cloud reaches Mars today. Blocking all of it needs <b>${need}</b> shelter power and you set <b>${S}</b>.`
-        : `A storm cloud reaches Mars today and you set the shelter to <b>0</b>. Its strength is unknown, so any storm will hit in full.`;
-    const box = popup(`<h2>Risky plan</h2><p>${msg}</p>
+        ? `Storm today. The shield has ${S} of ${need}.`
+        : "Storm today, and the shield is empty!";
+    const box =
+      popup(`<div class="bigic g-bad">${ic("dose")}</div><h2>Risky plan</h2><p>${msg}</p>
       <button class="go" id="back">Change my plan</button>
       <button class="go alt" id="yes">Run anyway</button>`);
     box.querySelector("#back").onclick = () => box.remove();
@@ -759,7 +777,6 @@ function finishDay(prenotes = []) {
   );
 
   // Radiation: a little each day with no shelter. A storm adds more unless the shelter is powered.
-  // A crew on a spacewalk is outside: walls and shelter do nothing for them.
   let dose = a.S === 0 ? 0.25 : 0;
   if (lvl > 0) {
     const nm = RealData.NAMES[lvl],
@@ -768,47 +785,37 @@ function finishDay(prenotes = []) {
     const t = game.M.tag("mars", today - 1);
     if (t) notes.push({ tone: "info", text: `<b>${t.title}.</b> ${t.text}` });
     dose += hit;
-    if (out)
-      note(
-        "bad",
-        `The crew was on a spacewalk when a ${nm} storm cloud reached Mars. Walls and shelter cannot protect people outdoors: radiation +${hit}.`,
-      );
+    if (out) note("bad", `Outside in a ${nm} storm! Radiation +${hit}.`);
     else if (hit === 0) {
-      note(
-        "good",
-        `A ${nm} storm cloud reached Mars and no radiation got through. Protecting the crew paid off.`,
-      );
+      note("good", `A ${nm} storm hit and the shield blocked all of it!`);
       if (a.S > need)
         notes.push({
           tone: "warn",
-          text: `${need} shelter power was enough. The other ${a.S - need} could have gone to science.`,
+          text: `${need} shield power was enough. The other ${a.S - need} could have gone to science.`,
         });
     } else if (a.S === 0)
-      note(
-        "bad",
-        `You skipped the shelter and a ${nm} storm cloud arrived. Radiation +${hit}, and it never goes away.`,
-      );
+      note("bad", `No shield! A ${nm} storm hit. Radiation +${hit}.`);
     else
       note(
         "bad",
-        `The shelter blocked some of the ${nm} storm, but radiation +${hit} got through. Blocking it all needed ${need} power.`,
+        `The shield was too weak for the ${nm} storm. Radiation +${hit}. It needed ${need}.`,
       );
     if (today > 1) {
       const yest = game.M.forecast("mars", today - 2, { horizon: 1 });
       if (!yest.some((x) => x.offset === 1))
         notes.push({
           tone: "warn",
-          text: "This storm cloud was not in yesterday's forecast: it left the Sun too recently to be predicted.",
+          text: "This storm was not in yesterday's forecast. It left the Sun too recently to be predicted.",
         });
     }
   } else if (a.S >= 2 && !out && game.extra[today] !== "burst") {
     notes.push({
       tone: "warn",
-      text: "No storm cloud was predicted for today, so the shelter power blocked nothing.",
+      text: "No storm was predicted today, so the shield power blocked nothing.",
     });
   }
 
-  // Quiet-day GAME events (always labelled as not from NASA)
+  // Quiet-day GAME events
   const ev = game.extra[today];
   if (ev === "burst") {
     const hit = out
@@ -817,153 +824,91 @@ function finishDay(prenotes = []) {
     dose += hit;
     notes.push({
       tone: "game",
-      text: `<b>${GAME_TAG}.</b> NASA’s log had nothing for today, but a small burst of particles reached the base anyway. Real space weather can surprise a crew, and “none logged” never means safe.`,
+      text: "NASA’s log was quiet, but a small burst of particles hit anyway. “None logged” never means safe.",
     });
     if (hit === 0)
       note(
         "good",
         a.S > 0
-          ? "The shelter blocked the surprise burst. No radiation got through."
-          : "Your thick shelter walls blocked the surprise burst.",
+          ? "The shield blocked the burst."
+          : "Thick walls blocked the burst.",
       );
-    else if (out)
-      note(
-        "bad",
-        `The crew was outside when the surprise burst arrived. Radiation +${hit}.`,
-      );
-    else
-      note(
-        "bad",
-        `You had no shelter power on, so the surprise burst added radiation +${hit}.`,
-      );
+    else if (out) note("bad", `Outside when the burst hit! Radiation +${hit}.`);
+    else note("bad", `No shield on. The burst added radiation +${hit}.`);
   } else if (ev === "dent") {
-    notes.push({
-      tone: "game",
-      text: `<b>${GAME_TAG}.</b> A tiny space rock dented the outside wall.`,
-    });
+    notes.push({ tone: "game", text: "A tiny space rock dented the wall." });
     if (game.repair[today])
-      note(
-        "good",
-        "The repair bot sealed the dent. No air was lost, and it cost 1 power.",
-      );
+      note("good", "The repair bot sealed the dent. No air lost.");
     else {
       game.air = Math.max(0, game.air - CONFIG.dentAir);
-      note(
-        "bad",
-        `Nobody repaired the dent, so ${CONFIG.dentAir} air leaked out.`,
-      );
+      note("bad", `Nobody fixed the dent. ${CONFIG.dentAir} air leaked out.`);
     }
   } else if (ev === "bloom") {
-    notes.push({
-      tone: "game",
-      text: `<b>${GAME_TAG}.</b> The plants were blooming.`,
-    });
+    notes.push({ tone: "game", text: "The plants were blooming." });
     if (a.G >= CONFIG.bloomNeed) {
       const was = game.food;
       game.food = Math.min(game.maxStock, game.food + CONFIG.bloomFood);
       const got = game.food - was;
       if (got >= CONFIG.bloomFood)
-        note("good", `You harvested the blooms: +${got} extra food.`);
+        note("good", `Harvested the blooms: +${got} food.`);
       else if (got > 0)
         note(
           "warn",
-          `You harvested the blooms, but the food tank was nearly full, so only +${got} extra food fit.`,
+          `Harvested the blooms, but the tank was nearly full. Only +${got} fit.`,
         );
       else
         note(
           "warn",
-          "You harvested the blooms, but the food tank was already full, so the extra food was wasted.",
+          "Harvested the blooms, but the tank was full. The food was wasted.",
         );
     } else
       notes.push({
         tone: "warn",
-        text: `The greenhouse needed ${CONFIG.bloomNeed} power to harvest the blooms. You gave it ${a.G}, so they were wasted.`,
+        text: `The blooms needed ${CONFIG.bloomNeed} greenhouse power. They got ${a.G}, so they were wasted.`,
       });
   }
 
-  if (game.dust[today])
-    note("warn", "The dust storm cut your solar power today.");
-
-  // Spacewalk: research from samples, plus radiation for being outside
   if (out) {
     dose += CONFIG.evaDose;
     game.evaUsed++;
     game.science += CONFIG.evaScience;
     note(
       "good",
-      `Spacewalk done! The crew brought back samples: +${CONFIG.evaScience} research. Being outside cost ${CONFIG.evaDose} radiation.`,
+      `Spacewalk! Samples brought back: +${CONFIG.evaScience} research.`,
     );
   }
 
   game.dose += dose;
   game.science += a.R;
 
-  // Discovery: research pays off later, so patience is rewarded
   const dNow = Math.min(
     CONFIG.maxDiscoveries,
     Math.floor(game.science / CONFIG.discoveryEvery),
   );
   if (dNow > game.discoveries) {
     game.discoveries = dNow;
-    note(
-      "good",
-      "Discovery! Your research found a better way to aim the solar panels. +1 power for the rest of the mission.",
-    );
+    note("good", "Discovery! +1 power for the rest of the mission.");
   }
 
-  // Strain: full power again and again overheats a system
-  for (const s of SYSTEMS) {
-    const k = s.key;
-    game.strain[k] = a[k] >= 4 ? game.strain[k] + 1 : 0;
-    if (game.strain[k] >= CONFIG.strainDays) {
-      game.strain[k] = 0;
-      addPenalty(
-        today + 1,
-        CONFIG.strainPenalty,
-        `${s.name.toLowerCase()} overheated`,
-      );
-      note(
-        "bad",
-        `${s.name} ran at full power ${CONFIG.strainDays} days in a row and overheated. Repairs cost ${CONFIG.strainPenalty} power tomorrow.`,
-      );
-    }
-  }
-
-  // Tired crew: low air or food drains tomorrow's power
-  if (
-    game.air > 0 &&
-    game.food > 0 &&
-    (game.air <= CONFIG.lowStock || game.food <= CONFIG.lowStock)
-  ) {
-    addPenalty(
-      today + 1,
-      CONFIG.tiredPenalty,
-      "the crew is tired from low air or food",
-    );
-    note(
-      "bad",
-      `The crew is low on ${game.air <= CONFIG.lowStock ? "air" : "food"} and tired. That means ${CONFIG.tiredPenalty} less power tomorrow.`,
-    );
-  }
-
-  // Battery: what you stored today arrives as extra power tomorrow
   if (a.B > 0 && today < game.total) {
     game.bonus[today + 1] = (game.bonus[today + 1] || 0) + a.B;
     game.carry[today + 1] = a.B;
     notes.push({
       tone: "info",
-      text: `${a.B} power was stored in the battery. It arrives as extra power tomorrow.`,
+      text: `${a.B} power saved. It arrives tomorrow.`,
     });
   }
 
-  // Win or lose?
+  game.lastPlan = { ...a };
+  game.pick = null;
+
   if (game.air <= 0) game.result = "air";
   else if (game.food <= 0) game.result = "food";
   else if (game.dose >= CONFIG.doseLimit) game.result = "dose";
   else if (game.sol >= game.total) game.result = "win";
   else {
     game.sol++;
-    game.alloc = emptyPlan(); // a new day, a new decision
+    game.alloc = emptyPlan();
   }
   if (game.result) award();
   render();
@@ -971,36 +916,38 @@ function finishDay(prenotes = []) {
   window.scrollTo(0, 0);
 }
 
-/* ---------- DAY REPORT (must be read before the next day) ---------- */
+/* ---------- DAY REPORT: big pictures first, one short line, details on request ---------- */
 function showReport(day, notes, before) {
-  const chip = (name, v, badWhenUp) => {
-    if (!v) return "";
-    const bad = badWhenUp ? v > 0 : v < 0;
-    return `<span class="chip ${bad ? "minus" : "plus"}">${name} ${v > 0 ? "+" : "−"}${fmt(Math.abs(v))}</span>`;
+  const big = (icon, name, v, badUp) => {
+    const bad = badUp ? v > 0 : v < 0;
+    return `<div class="bigchip ${v === 0 ? "zero" : bad ? "minus" : "plus"}">${ic(icon)}<b>${v > 0 ? "+" : v < 0 ? "−" : ""}${fmt(Math.abs(v))}</b><small>${name}</small></div>`;
   };
+  const sci = game.science - before.science;
   const chips =
-    chip("Air", game.air - before.air, false) +
-    chip("Food", game.food - before.food, false) +
-    chip("Radiation", game.dose - before.dose, true) +
-    chip("Research", game.science - before.science, false);
-  const rows = (
-    notes.length
-      ? notes
-      : [{ tone: "good", text: "A calm day. Nothing unexpected." }]
-  )
-    .map((n) => `<li class="${n.tone}">${n.text}</li>`)
-    .join("");
-  const box = popup(`<h2>Day ${day} report</h2>
-    <div class="chips">${chips}</div>
-    <ul class="rep">${rows}</ul>
+    big("L", "Air", game.air - before.air, false) +
+    big("food", "Food", game.food - before.food, false) +
+    big("dose", "Radiation", game.dose - before.dose, true) +
+    (sci ? big("R", "Research", sci, false) : "");
+  const li = (n) =>
+    `<li class="${n.tone}">${n.text}${n.tone === "game" ? `<small class="gtag">${GAME_TAG}</small>` : ""}</li>`;
+  const list = notes.length ? notes : [{ tone: "good", text: "A calm day." }];
+  const main = list
+    .filter((n) => ["good", "bad", "game"].includes(n.tone))
+    .slice(0, 3);
+  const rest = list.filter((n) => !main.includes(n));
+  const box = popup(`<h2>Day ${day}</h2>
+    <div class="bigchips">${chips}</div>
+    ${main.length ? `<ul class="rep">${main.map(li).join("")}</ul>` : ""}
+    ${rest.length ? `<details class="more"><summary>More</summary><ul class="rep">${rest.map(li).join("")}</ul></details>` : ""}
     <button class="go" id="cont">${game.result ? "See results ▶" : "Start Day " + game.sol + " ▶"}</button>`);
   box.querySelector("#cont").onclick = () => {
     box.remove();
     window.scrollTo(0, 0);
+    tipSoon();
   };
 }
 
-/* ---------- EMERGENCY POP-UP WITH COUNTDOWN + ASK EARTH ---------- */
+/* ---------- POP-UPS ---------- */
 function popup(html) {
   const box = document.createElement("div");
   box.className = "overlay";
@@ -1010,56 +957,59 @@ function popup(html) {
   return box;
 }
 
+/* ---------- EMERGENCY: countdown ring, three icon buttons, Ask Earth ---------- */
 function showEmergency(em) {
-  const total = game.tier.time + 4 * lv("drills"); // real seconds on the clock
-  const k = em.minutes / game.tier.time; // story minutes per real second
+  const total = game.tier.time + 4 * lv("drills");
+  const k = em.minutes / game.tier.time;
   const D = window.Delay;
   const iso = isoOf(game.sol);
   const one = D ? D.oneWayMin(iso) : 0;
-  const rt = 2 * one; // round trip, in story minutes
-  const need = D ? rt / k : 0; // real seconds an answer would use up
+  const rt = 2 * one;
+  const need = D ? rt / k : 0;
   const best = recommend(em);
   let left = total,
     asked = false;
-  const opts = [...em.choices].sort(() => Math.random() - 0.5); // shuffle so the best one moves around
+  const opts = [...em.choices].sort(() => Math.random() - 0.5);
+  const R = 34,
+    C = 2 * Math.PI * R;
 
-  const earthBox = D
-    ? `<div class="earthbox">
-        <p class="fact">${ic("earth")} On ${dateOf(game.sol)}, Mars is about <b>${D.auAt(iso).toFixed(1)} AU</b> from Earth (1 AU = the Sun–Earth distance). A radio message takes <b>${fmtMin(one)} min</b> each way, so an answer takes <b>${fmtMin(rt)} min</b>.</p>
-        <button class="go alt" id="ask"></button>
-        <p class="fact" id="advice"></p>
-      </div>`
+  const earth = D
+    ? `<button class="ask" id="ask">${ic("earth")}<span><b>Ask Earth</b><small id="asksub"></small></span><i class="sig"></i></button>
+       <p class="fact" id="advice"></p>
+       <details class="more"><summary>Why does asking take time?</summary>
+         <p class="fact">On ${dateOf(game.sol)} Mars is about <b>${D.auAt(iso).toFixed(1)} AU</b> from Earth (1 AU = the Sun–Earth distance). A radio message takes <b>${fmtMin(one)} min</b> each way, so an answer takes <b>${fmtMin(rt)} min</b>. The ring is sped up: it shows about <span id="story"></span> min of the emergency left. ${D.label}.</p>
+       </details>`
     : "";
 
   const box = popup(`
-    <h2>${em.title}</h2><p>${em.text}</p>
-    <div class="timer"><i></i></div>
-    <p class="count">Decide in <b>${left}</b> seconds!</p>
-    ${earthBox}
-    ${opts.map((c, i) => `<button class="choice" data-i="${i}"><b>${c.label}</b><small>${costOf(c.effect)}</small></button>`).join("")}
-    ${D ? `<p class="fact"><small>Story clock: <span id="story"></span>. ${D.label}.</small></p>` : ""}`);
+    <div class="bigic">${ic(em.icon)}</div>
+    <h2>${em.title}</h2>
+    <div class="ring"><svg viewBox="0 0 80 80"><circle class="bg" cx="40" cy="40" r="${R}"/><circle class="fg" cx="40" cy="40" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg><b>${left}</b></div>
+    ${earth}
+    ${opts.map((c, i) => `<button class="choice" data-i="${i}"><b>${c.label}</b><span class="cost">${costChips(c.effect)}</span></button>`).join("")}`);
 
-  const bar = box.querySelector(".timer i"),
-    num = box.querySelector(".count b"),
+  const al = box.querySelector(".alert"),
+    num = box.querySelector(".ring b"),
+    fg = box.querySelector(".ring .fg"),
     ask = box.querySelector("#ask"),
+    asksub = box.querySelector("#asksub"),
     advice = box.querySelector("#advice"),
     story = box.querySelector("#story");
 
   const refresh = () => {
-    num.textContent = Math.max(0, Math.ceil(left));
-    bar.style.width = Math.max(0, (left / total) * 100) + "%";
+    const sec = Math.max(0, Math.ceil(left));
+    num.textContent = sec;
+    fg.style.strokeDashoffset = C * (1 - Math.max(0, left) / total);
+    if (sec <= 3) al.classList.add("urgent");
     if (!D) return;
-    const mins = Math.max(0, Math.ceil(left * k));
-    story.textContent = `about ${mins} min of the emergency left`;
-    if (asked) {
-      ask.style.display = "none";
-      return;
-    }
+    story.textContent = Math.max(0, Math.ceil(left * k));
+    if (asked) return;
     const can = left - need >= 1.5;
     ask.disabled = !can;
-    ask.innerHTML = can
-      ? `Ask Mission Control · the answer takes ${fmtMin(rt)} min`
-      : `Too late to ask: the answer takes ${fmtMin(rt)} min, but only ${mins} min are left`;
+    ask.classList.toggle("late", !can);
+    asksub.textContent = can
+      ? `reply in ${fmtMin(rt)} min`
+      : `too late: reply takes ${fmtMin(rt)} min`;
   };
 
   const done = (choice, timedOut) => {
@@ -1078,9 +1028,12 @@ function showEmergency(em) {
       if (asked || left - need < 1.5) return;
       asked = true;
       left -= need; // the round trip uses up part of the clock
-      advice.innerHTML = `<b>Mission Control replies:</b> “Choose <b>${best.label}</b>.” They checked your supplies (air ${fmt(game.air)}, food ${fmt(game.food)}, radiation ${fmt(game.dose)}) and tomorrow’s forecast. Waiting for the answer used ${fmtMin(rt)} min.`;
+      ask.classList.add("sent");
+      ask.disabled = true;
+      asksub.textContent = "Earth replied!";
+      advice.innerHTML = `${ic("check")} <b>Earth says:</b> ${best.label}. (The wait used ${fmtMin(rt)} min.)`;
       box.querySelectorAll(".choice").forEach((b) => {
-        if (opts[b.dataset.i] === best) b.classList.add("rec");
+        if (opts[b.dataset.i] === best) b.classList.add("best");
       });
       refresh();
     };
@@ -1090,17 +1043,9 @@ function showEmergency(em) {
   refresh();
 }
 
-const CHIPS = {
-  air: "Air",
-  food: "Food",
-  dose: "Radiation",
-  science: "Research",
-  powerNext: "Power tomorrow",
-};
 const GRADES = { good: "Great choice!", ok: "Not bad", bad: "Risky choice" };
 
 function applyEmergency(em, choice, timedOut) {
-  // Grade by how much it hurt compared with the cheapest answer for today's supplies
   const best = recommend(em);
   const gap = timedOut ? 99 : harmOf(choice.effect) - harmOf(best.effect);
   const grade = timedOut
@@ -1125,30 +1070,31 @@ function applyEmergency(em, choice, timedOut) {
         : "an emergency was handled badly",
     );
 
-  const chips = Object.keys(e)
-    .map(
-      (k) =>
-        `<span class="chip ${(k === "dose" ? e[k] > 0 : e[k] < 0) ? "minus" : "plus"}">${CHIPS[k]} ${e[k] > 0 ? "+" : ""}${e[k]}</span>`,
-    )
-    .join("");
   const tone = grade === "good" ? "good" : grade === "ok" ? "warn" : "bad";
   const text = timedOut
-    ? `${em.title} You did not decide in time. ${choice.result}`
-    : `${em.title} You chose "${choice.label}". ${choice.result}`;
+    ? `${em.title} Time ran out. ${choice.result}`
+    : `${em.title} You chose “${choice.label}”. ${choice.result}`;
   if (tone !== "warn") game.log.push({ day: game.sol, tone, text });
 
   const hint =
     grade !== "good"
-      ? `<p class="fact">With your supplies that day, the cheapest answer was “${best.label}”. What hurts most depends on what you are short of.</p>`
+      ? `<p class="fact">With your supplies that day, the cheapest answer was “${best.label}”.</p>`
       : "";
   const box = popup(`
-    <h2 class="g-${grade}">${timedOut ? "⏰ Time ran out!" : GRADES[grade]}</h2>
-    <p>${choice.result}</p><div class="chips">${chips}</div>
-    <p class="fact">${choice.lesson}</p>${hint}
+    <div class="bigic g-${grade}">${ic(em.icon)}</div>
+    <h2 class="g-${grade}">${timedOut ? "Time ran out!" : GRADES[grade]}</h2>
+    <p>${choice.result}</p>
+    <div class="cost big">${costChips(e)}</div>
+    <details class="more"><summary>Why?</summary><p class="fact">${choice.lesson}</p>${hint}</details>
     <button class="go" id="cont">Continue ▶</button>`);
   box.querySelector("#cont").onclick = () => {
     box.remove();
-    finishDay([{ tone, text }]);
+    finishDay([
+      {
+        tone,
+        text: `${em.title} ${timedOut ? "Time ran out." : choice.label + "."}`,
+      },
+    ]);
   };
 }
 
@@ -1165,7 +1111,7 @@ function showMain() {
     <div class="hero">
       <svg class="logo" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#c4553b" stroke="#1e1a3c" stroke-width="4"/><ellipse cx="32" cy="34" rx="30" ry="9" fill="none" stroke="#ffc933" stroke-width="4" transform="rotate(-20 32 34)"/><circle cx="24" cy="26" r="4" fill="#8e3a3a"/><circle cx="38" cy="40" r="3" fill="#8e3a3a"/></svg>
       <h1>Mars Outpost</h1>
-      <p class="sub">Mission ${tr.level + 1}: keep your crew alive for ${tr.days} days of real space weather.</p>
+      <p class="sub">Mission ${tr.level + 1}: ${tr.days} days of real space weather.</p>
     </div>
     <button class="go" onclick="startMission()">▶ Play Mission ${tr.level + 1}</button>
     <button class="go alt" onclick="showMenu()">Cargo &amp; upgrades <span class="pill">${save.points}</span></button>
@@ -1177,29 +1123,12 @@ function showMain() {
 function showHow() {
   app.innerHTML = `
     <h1>How to play</h1>
-    <div class="card"><h2>Your job</h2>
-      <p>Each day you get a few <b>power units</b>. Share <b>all of them</b> between life support, the greenhouse, the storm shelter and the science lab. Press <b>Run Day</b> to see what happens.</p>
-      <p>Your plan starts empty every day, because every day is different. Power is never enough for everything, so every choice has a cost.</p></div>
-    <div class="card"><h2>Real space weather</h2>
-      <p>Every mission replays a real stretch of days from NASA’s DONKI records. When NASA’s model predicted a solar storm cloud (a CME) reaching Mars on a day, a storm arrives on that day in the game.</p>
-      <p>The forecast shows the real predicted arrival time. Faster clouds hit harder. Without the early-warning satellite you do <b>not</b> know how strong a storm is, so you must decide how much shelter power to risk.</p>
-      <p>“None logged” does not mean safe. It only means NASA’s model listed nothing.</p></div>
-    <div class="card"><h2>Other things that happen</h2>
-      <p><b>Dust storms</b> (a game event): less sunlight means less power. They show up with no warning.</p>
-      <p><b>Emergencies</b> (a game event): pick fast before the timer runs out! Each answer costs something different, so the best one depends on what you are short of.</p>
-      <p><b>Ask Earth:</b> in an emergency you can ask Mission Control for advice. But a message takes minutes each way, and how many minutes depends on where Earth and Mars really were on that date. Sometimes the answer arrives in time. Sometimes it is too late.</p>
-      <p><b>Quiet-day surprises</b> (game events): if NASA’s log is quiet for too long, the game adds something small: a surprise particle burst, a dented wall, or blooming plants. They are marked <b>“${GAME_TAG}”</b> so you always know what is real.</p></div>
-    <div class="card"><h2>Battery and spacewalks</h2>
-      <p><b>Battery (from Mission ${CONFIG.batteryFrom + 1}):</b> power you store today arrives tomorrow, up to ${CONFIG.batteryCap}. It does nothing for you today, so saving for a storm means doing less now.</p>
-      <p><b>Spacewalks (from Mission ${CONFIG.evaFrom + 1}):</b> a spacewalk costs 1 power and ${CONFIG.evaDose} radiation and brings back +${CONFIG.evaScience} research. Outside, the shelter cannot protect the crew, so pick your day with the forecast.</p></div>
-    <div class="card"><h2>Choices have results</h2>
-      <p><b>Overheating:</b> a system at full power ${CONFIG.strainDays} days in a row breaks, and repairs cost power.</p>
-      <p><b>Tired crew:</b> low air or food means less power tomorrow.</p>
-      <p><b>Discoveries:</b> every ${CONFIG.discoveryEvery} research points gives +1 power for the rest of the mission.</p>
-      <p>After every day a report tells you what happened and why.</p></div>
-    <div class="card"><h2>Missions and cargo</h2>
-      <p>Mission 1 lasts ${CONFIG.daysPerStep} days. Clear it to unlock a longer, harder mission. If you do not make it, you try the same mission again on a different real stretch of days.</p>
-      <p>Research points buy upgrades. A rocket can only carry a few, so you choose which ones to pack. Real missions have weight limits too!</p></div>
+    <div class="card howlist">
+      <p>${ic("bolt")}<span>Tap a tile to send it a power cell. Use all cells, then run the day.</span></p>
+      <p>${ic("S")}<span>Storm coming? Fill the shield. The storms are from real NASA records.</span></p>
+      <p>${ic("L")}<span>Keep air and food up. Radiation never goes down.</span></p>
+      <p>${ic("info")}<span>New tools unlock in later missions. A tip pops up when they do.</span></p>
+    </div>
     <button class="go" onclick="showMain()">◀ Back</button>`;
   window.scrollTo(0, 0);
 }
@@ -1245,6 +1174,7 @@ function showAbout() {
       <h2>What is NOT from NASA data</h2>
       <p><b>Game events</b> are marked “${GAME_TAG}”. They are dust storms, emergencies, and quiet-day surprises (a particle burst, a dented wall, blooming plants). The game never lets more than ${CONFIG.maxQuietRun} days in a row pass with nothing happening, and adds at most one quiet-day surprise per ${CONFIG.fillerEvery} days. The surprise particle burst is made up. It exists to show that a quiet log is not a promise of safety.</p>
       <p>Mission Control’s advice in an emergency comes from the game’s own cost scale, not from NASA. The upgrades, the battery, the spacewalk rewards and all game numbers are made up for play. The 2018 dust storm that stopped the Opportunity rover, the 2003 and 1972 storms and the length of a sol (about 24 h 39 min) are facts written by hand. They are not DONKI data.</p>
+      <p>New rules unlock one mission at a time: dust and the battery in Mission 2, emergencies, Ask Earth and spacewalks in Mission 3.</p>
 
       <h2>Credits</h2>
       <p>Data: NASA DONKI via api.nasa.gov. Signal time: ${delayLabel}. This game is not made or endorsed by NASA.</p>
@@ -1260,14 +1190,12 @@ function award() {
   game.okDose = game.dose <= CONFIG.doseLimit * 0.3;
   game.okSci = game.science >= game.goal;
   game.stars = win ? 1 + (game.okDose ? 1 : 0) + (game.okSci ? 1 : 0) : 0;
-  // +10 for surviving, +3 for each extra star
   game.earned = game.science + (win ? 10 + 3 * (game.stars - 1) : 0);
   save.points += game.earned;
 
   game.unlocked = false;
   if (win) {
     save.stars[game.level] = Math.max(save.stars[game.level] || 0, game.stars);
-    // Clearing your current mission unlocks the next one. Losing changes nothing.
     if (game.level === save.level && save.level < CONFIG.maxLevel) {
       save.level++;
       game.unlocked = true;
@@ -1304,7 +1232,7 @@ function buyItem(k) {
   showMenu(true);
 }
 function resetSave() {
-  if (confirm("Erase all points, upgrades and mission progress?")) {
+  if (confirm("Erase all points, upgrades, tips and mission progress?")) {
     save = freshSave();
     persist();
     showMenu();
@@ -1357,97 +1285,118 @@ function showMenu(keepScroll) {
   app.innerHTML = `
     <h1>Mars Outpost</h1>
     <div class="card"><h2>Mission ${tr.level + 1}: ${tr.days} days</h2>
-      <p class="fact">Rank: ${tr.rank}. ${best ? `Best so far: <span class="stars">${starsStr(best)}</span>. ` : ""}${lastTier ? "This is the final mission. Replay it to earn more stars." : `Clear it to unlock Mission ${tr.level + 2} (${missionDays(save.level + 1)} days). If you do not make it, you try this one again.`} Each try replays a different real stretch of NASA space-weather days.</p></div>
+      <p class="fact">Rank: ${tr.rank}. ${best ? `Best so far: <span class="stars">${starsStr(best)}</span>. ` : ""}${lastTier ? "Final mission. Replay it for more stars." : `Clear it to unlock Mission ${tr.level + 2} (${missionDays(save.level + 1)} days).`}</p></div>
     <div class="card"><h2>Cargo bay: ${save.cargo.length} of ${slots} packed</h2>
       <div class="bay">${bay}</div>
-      <p class="fact">The rocket can only carry ${slots} things. Pick what your crew needs most. Real rockets have weight limits too!</p></div>
-    <div class="card"><h2>${save.points} research points</h2>
-      <p class="fact">Earn points from science each mission, plus a bonus for surviving and for stars.</p></div>
+      <p class="fact">The rocket can only carry ${slots} things, like a real one.</p></div>
+    <div class="card"><h2>${save.points} research points</h2></div>
     <div class="card"><h2>Upgrades</h2><p class="fact">You keep these forever, but you must pack them to use them.</p>${ups}</div>
-    <div class="card"><h2>One-mission items</h2><p class="fact">Packed items are used up when the mission starts.</p>${items}</div>
+    <div class="card"><h2>One-mission items</h2><p class="fact">Used up when the mission starts.</p>${items}</div>
     <button class="go" onclick="startMission()">Start Mission ${tr.level + 1} ▶</button>
     <button class="go alt" onclick="showMain()">◀ Main menu</button>
     <p class="fact" style="text-align:center"><a href="#" onclick="resetSave();return false" style="color:inherit">Reset progress</a></p>`;
   if (!keepScroll) window.scrollTo(0, 0);
 }
 
-/* ---------- ACTIVITIES: forecast, Earth quiz, spacewalk ---------- */
-function forecastStrip() {
+/* ---------- SKY STRIP: one picture per day, tap a day for one line ---------- */
+function skyStrip() {
   const look = lookAhead(),
     fc = forecast(),
     N = RealData.NAMES;
-  let tiles = "";
-  for (let d = game.sol; d < game.sol + 4 && d <= game.total; d++) {
+  const page = Math.floor((game.sol - 1) / 10) * 10 + 1; // 10 days at a time
+  const sel = game.pick || (tmrStorm() ? game.sol + 1 : game.sol);
+
+  const kindOf = (d) => {
+    const off = d - game.sol;
+    if (off <= 0)
+      return stormLevel(d) > 0 ? "storm" : game.dust[d] ? "dust" : "calm";
+    if (off < look) return fc.find((x) => x.offset === off) ? "storm" : "calm";
+    return "unk";
+  };
+
+  const lineFor = (d) => {
     const off = d - game.sol,
-      known = off < look;
-    const e = known ? fc.find((x) => x.offset === off) : null;
-    const storm = known && (!!e || (off === 0 && stormLevel(d) > 0));
-    const lvl = e && e.level != null ? e.level : stormLevel(d);
-    const icon = !known ? "?" : storm ? ic("dose") : ic("sun");
-    const name = !known
-      ? "Unknown"
-      : storm
-        ? game.warning
-          ? `${N[lvl]} storm`
-          : "Storm due"
-        : "None logged";
-    tiles += `<div class="ftile ${storm ? "storm" : ""} ${d === game.sol ? "now" : ""}"><small>${d === game.sol ? "Today" : "Day " + d} · ${shortDate(d)}</small><span>${icon}</span><small>${name}</small></div>`;
+      kind = kindOf(d),
+      lvl = stormLevel(d);
+    if (off < 0)
+      return kind === "storm"
+        ? `Day ${d}: a ${N[lvl]} storm hit.`
+        : kind === "dust"
+          ? `Day ${d}: a dust storm.`
+          : `Day ${d}: a quiet day.`;
+    if (off === 0)
+      return kind === "storm"
+        ? `Storm cloud reaching Mars today${game.warning ? " (" + N[lvl] + ")" : ""}.`
+        : kind === "dust"
+          ? "Dust storm today."
+          : "Nothing predicted today. That is not a promise.";
+    if (kind === "unk") return `Day ${d}: too far ahead to see.`;
+    if (kind === "storm") {
+      const e = fc.find((x) => x.offset === off);
+      return `NASA’s model: a ${game.warning && e.level != null ? N[e.level] + " " : ""}storm cloud reaches Mars ${shortDate(d)}. Predicted arrival ${e.windowText}.`;
+    }
+    return `Nothing predicted for ${shortDate(d)}. Not a promise.`;
+  };
+
+  let tiles = "";
+  for (let d = page; d < page + 10 && d <= game.total; d++) {
+    const off = d - game.sol,
+      kind = kindOf(d);
+    tiles += `<button class="stile ${kind} ${d === sel ? "sel" : ""} ${off === 0 ? "now" : ""} ${off < 0 ? "past" : ""}" onclick="pickDay(${d})" aria-label="Day ${d}">${kind === "unk" ? '<span class="q">?</span>' : ic(kind === "storm" ? "dose" : kind === "dust" ? "dust" : "sun")}<small>${d}</small></button>`;
   }
-  const nx = game.sol < game.total ? fc.find((x) => x.offset === 1) : null;
-  let advice = "";
-  if (game.sol < game.total) {
-    if (nx) {
-      const need = game.warning ? needFor(RealData.DOSE[nx.level]) : null;
-      advice = `<div class="advice storm"><b>${game.warning ? N[nx.level] + " storm cloud" : "Storm cloud"} due tomorrow.</b> NASA’s model predicts arrival ${nx.windowText}. ${
-        game.warning
-          ? `Blocking it all takes ${need} shelter power.`
-          : `Strength unknown: blocking it takes ${needRange()} shelter power.`
-      } Protect, or gamble and use that power elsewhere?</div>`;
-    } else
-      advice = `<div class="advice calm">Nothing predicted for tomorrow. That is not a promise: a new cloud can still be launched, and small surprises can happen. Good time for science, but keep an eye on your supplies.</div>`;
-  }
-  return `<div class="card"><h2>Forecast</h2><div class="fgrid">${tiles}</div>${advice}
-    ${more("odds", "Where does this forecast come from?", `<p class="fact">These are real predictions from NASA’s DONKI database (archived copy, not live). You can only see clouds that have already left the Sun, and the arrival window comes from several model runs that disagree by hours. Predictions are not measurements: real clouds can arrive earlier, later, or miss.${game.warning ? " Your satellite also shows how strong each cloud is." : " Pack the early-warning satellite to see 4 days ahead and how strong each cloud is."}</p>`)}</div>`;
+  return `<div class="card sky"><div class="evhead"><h2>Sky</h2>
+      <button class="nasabadge" onclick="showSource()">${ic("info")} NASA forecast</button></div>
+    <div class="strip">${tiles}</div>
+    <p class="skyinfo">${lineFor(sel)}</p></div>`;
 }
 
-function quizCard() {
-  const d = game.sol,
-    Q = QUIZ[game.quizOrder[(d - 1) % QUIZ.length]],
-    res = game.quizRes[d];
-  if (res)
-    return `<div class="act"><b>Question from Earth</b><p class="fact">${res.ok ? "Correct! +1 research point." : "Not quite. The answer is: " + Q.right + "."} ${Q.why}</p></div>`;
-  if (!game.quizOpts[d])
-    game.quizOpts[d] = [Q.right, ...Q.wrong].sort(() => Math.random() - 0.5);
-  return `<div class="act"><b>Quick question from Earth</b> <small>(+1 research point)</small><p>${Q.q}</p>
-    ${game.quizOpts[d].map((o, i) => `<button class="opt" onclick="answerQuiz(${i})">${o}</button>`).join("")}</div>`;
+/* ---------- SOURCE POP-UP (the NASA badge) ---------- */
+function showSource() {
+  const h = HISTORY[(game ? game.sol + game.level : 0) % HISTORY.length];
+  const range = game
+    ? `Replaying real days: ${RealData.fmtD(game.M.startDate)} to ${RealData.fmtD(game.M.endDate)}.`
+    : "";
+  const box =
+    popup(`<div class="bigic">${ic("info")}</div><h2>Where is this from?</h2>
+    <p><b>Storms:</b> NASA’s DONKI space-weather records (${RealData.meta.label}). ${range} NASA’s model predicted when each storm cloud reaches Mars.</p>
+    <p><b>Dashed purple cards:</b> game events. Dust, emergencies and surprises are made up by the game.</p>
+    <details class="more"><summary>History fact</summary><p class="fact"><b>${h.title}.</b> ${h.fact}</p>
+    <p class="fact">${DUST_FACT}</p></details>
+    <button class="go" id="x">Close</button>`);
+  box.querySelector("#x").onclick = () => box.remove();
 }
-function answerQuiz(i) {
+
+/* ---------- OPTIONAL: QUIZ + EARTH MAIL (small buttons, no free points) ---------- */
+function showQuiz() {
   const d = game.sol,
     Q = QUIZ[game.quizOrder[(d - 1) % QUIZ.length]];
-  const ok = game.quizOpts[d][i] === Q.right;
-  game.quizRes[d] = { ok };
-  if (ok) game.science++;
-  render();
+  if (!game.quizOpts[d])
+    game.quizOpts[d] = [Q.right, ...Q.wrong].sort(() => Math.random() - 0.5);
+  const result = (ok) =>
+    `<p class="${ok ? "g-good" : "g-bad"}"><b>${ok ? "Correct!" : "Not quite."}</b> ${ok ? "" : "It is: " + Q.right + ". "}${Q.why}</p>`;
+  const box =
+    popup(`<div class="bigic">${ic("quiz")}</div><h2>Quiz</h2><p>${Q.q}</p>
+    <div id="qa">${
+      game.quizRes[d]
+        ? result(game.quizRes[d].ok)
+        : game.quizOpts[d]
+            .map(
+              (o, i) =>
+                `<button class="choice" data-i="${i}"><b>${o}</b></button>`,
+            )
+            .join("")
+    }</div>
+    <button class="go alt" id="x">Close</button>`);
+  box.querySelector("#x").onclick = () => box.remove();
+  box.querySelectorAll("#qa .choice").forEach((b) => {
+    b.onclick = () => {
+      const ok = game.quizOpts[d][b.dataset.i] === Q.right;
+      game.quizRes[d] = { ok };
+      box.querySelector("#qa").innerHTML = result(ok);
+    };
+  });
 }
 
-// Spacewalk card (inside the power card). Only from the mission where spacewalks unlock.
-function evaCard() {
-  if (!game.evaSlots) return "";
-  const on = isOut(),
-    left = game.evaSlots - game.evaUsed,
-    lvl = stormLevel();
-  const noPower = !on && used() >= power();
-  const risk =
-    lvl > 0
-      ? `<b>A storm cloud reaches Mars today.</b> Outside, the shelter and walls cannot protect the crew. They would take the whole storm (${game.warning ? "radiation +" + stormDose() : "up to +" + RealData.DOSE[4]}).`
-      : `NASA’s log has nothing for Mars today. That is not a promise: a surprise would hit a crew that is outside in full.`;
-  return `<div class="act"><b>${ic("eva")} Spacewalk</b> <small>(${left} of ${game.evaSlots} left)</small>
-    <p class="fact">Costs 1 power and ${CONFIG.evaDose} radiation. Brings back <b>+${CONFIG.evaScience} research</b>.</p>
-    <p class="fact">${risk}</p>
-    <button class="item" onclick="toggleEva()" ${!on && (left <= 0 || noPower) ? "disabled" : ""}>${on ? "Cancel the spacewalk (get the power back)" : left <= 0 ? "No spacewalks left" : "Go outside today"}${noPower && left > 0 ? "<br><small>Take 1 power off a system first.</small>" : ""}</button></div>`;
-}
-
-/* ---------- NEWS + MESSAGES FROM EARTH ---------- */
 const NEWS = [
   "Curiosity rover has explored Gale Crater on Mars since 2012.",
   "Perseverance landed in Jezero Crater in February 2021.",
@@ -1465,11 +1414,11 @@ const NEWS = [
 const MESSAGES = [
   {
     from: "Mission Control",
-    text: "Good morning, crew! Check the forecast before you share out power.",
+    text: "Good morning, crew! Check the sky before you share out power.",
   },
   {
     from: "Dr. Rivera, solar scientist",
-    text: "We watch the Sun every day. Fast clouds hit hardest, so shelter early.",
+    text: "Fast clouds hit hardest, so shelter early.",
   },
   {
     from: "Your family",
@@ -1481,81 +1430,168 @@ const MESSAGES = [
   },
   {
     from: "Engineer Sam",
-    text: "Tip: spare parts and a calm plan fix most problems. And don’t run one system flat out day after day!",
-  },
-  {
-    from: "Mission Control",
-    text: "Remember: radiation dose never goes down. Shelter is cheaper than going home.",
+    text: "Spare parts and a calm plan fix most problems.",
   },
   {
     from: "Chef Amara",
     text: "One greenhouse unit feeds the crew for a day. Plants make a little air too!",
   },
-  {
-    from: "Mission Control",
-    text: "Our messages take minutes to reach you. You are the experts on the ground.",
-  },
 ];
-
-// Messages react to what is happening in the game.
-function todaysMessages() {
-  const MC = { from: "Mission Control" };
-  const nx =
-    game.sol < game.total ? forecast().find((x) => x.offset === 1) : null;
+function showMail() {
+  const MC = "Mission Control";
   let hot = null;
   if (stormLevel() > 0)
     hot = {
-      ...MC,
-      text: "RADIATION WATCH! A storm cloud is reaching Mars today. Is the shelter worth the power?",
-      urgent: true,
+      from: MC,
+      text: "A storm cloud is reaching Mars today. Is the shield worth the power?",
     };
-  else if (nx)
+  else if (tmrStorm())
     hot = {
-      ...MC,
-      text: `Our solar scouts spotted a storm cloud. NASA’s model says it reaches you ${nx.windowText}. Plan your shelter power.`,
-      urgent: true,
+      from: MC,
+      text: "Our scouts spotted a storm cloud. Plan your shield power.",
     };
   else if (game.air <= 3)
     hot = {
-      ...MC,
+      from: MC,
       text: "Your air is getting low. Put more power into life support!",
-      urgent: true,
     };
   else if (game.food <= 3)
-    hot = {
-      ...MC,
-      text: "Food is low. Don’t forget the greenhouse!",
-      urgent: true,
-    };
+    hot = { from: MC, text: "Food is low. Don’t forget the greenhouse!" };
   else if (game.dose >= 6)
-    hot = {
-      ...MC,
-      text: "Your radiation dose is high. Spend more time in the shelter.",
-      urgent: true,
-    };
+    hot = { from: MC, text: "Your radiation is high. Use the shield." };
   const list = [
     hot || MESSAGES[game.sol % MESSAGES.length],
     MESSAGES[(game.sol + 3) % MESSAGES.length],
   ];
-  // "Sent X ago" is the real one-way signal time for today's date
   const w = oneWayMin();
   const ago = w == null ? "a few minutes" : `${fmtMin(w)} minutes`;
-  return list.map((m) => ({ ...m, ago }));
+  const html = list
+    .map(
+      (m) =>
+        `<div class="msg"><span class="av" style="background:${AVC[m.from.length % 4]}">${m.from[0]}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${ago} ago</small></div></div>`,
+    )
+    .join("");
+  const box =
+    popup(`<div class="bigic">${ic("mail")}</div><h2>Mail from Earth</h2>${html}
+    <p class="fact"><b>Did you know?</b> ${NEWS[(game.sol * 3) % NEWS.length]}</p>
+    <button class="go alt" id="x">Close</button>`);
+  box.querySelector("#x").onclick = () => box.remove();
 }
-const msgHTML = (m) =>
-  `<div class="msg ${m.urgent ? "urgent" : ""}"><span class="av" style="background:${AVC[m.from.length % 4]}">${m.from[0]}</span><div><b>${m.from}</b><p>${m.text}</p><small>Sent ${m.ago} ago</small></div></div>`;
 
-function extras() {
-  const msgs = todaysMessages();
-  const news = [0, 1].map((i) => NEWS[(game.sol * 3 + i) % NEWS.length]);
-  return fold(
-    "news",
-    "From Earth &amp; news",
-    msgs.map(msgHTML).join("") +
-      news.map((l) => `<p class="headline">${l}</p>`).join(""),
-    msgs[0].urgent ? '<span class="dot">!</span>' : "",
-  );
+/* ---------- ONE-TIME TIPS: a bubble with an arrow, shown once ---------- */
+const TIPS = [
+  {
+    id: "pads",
+    when: () => true,
+    target: ".pads",
+    text: "Tap a tile to send it a power cell.",
+  },
+  {
+    id: "run",
+    when: () => used() >= power(),
+    target: ".rungo",
+    text: "All cells used. Run the day!",
+  },
+  {
+    id: "storm",
+    when: () => stormLevel() > 0 || tmrStorm(),
+    target: ".p-S",
+    text: "Storm! Fill the shield.",
+  },
+  {
+    id: "sky",
+    when: () => game.sol >= 2,
+    target: ".sky .strip",
+    text: "Tap a day to see NASA’s forecast.",
+  },
+  {
+    id: "battery",
+    when: () => batteryOn(),
+    target: ".p-B",
+    text: "Save a cell for tomorrow.",
+  },
+  {
+    id: "dust",
+    when: () => dustToday(),
+    target: ".dustcard",
+    text: "Dust means less power today.",
+  },
+  {
+    id: "bloom",
+    when: () => gameEventToday() === "bloom",
+    target: ".bloomcard",
+    text: "Give Food 2 cells for bonus food.",
+  },
+  {
+    id: "bot",
+    when: () => gameEventToday() === "dent",
+    target: ".botbtn",
+    text: "Send the bot or lose air.",
+  },
+  {
+    id: "eva",
+    when: () => !!game.evaSlots,
+    target: ".evabtn",
+    text: "Go outside for science. No shield out there!",
+  },
+];
+let tipEl = null;
+function clearTip() {
+  if (tipEl) {
+    tipEl.remove();
+    tipEl = null;
+  }
+  app.querySelectorAll(".hint").forEach((e) => e.classList.remove("hint"));
 }
+const tipSoon = () => setTimeout(showTip, 120);
+function showTip() {
+  if (!game || game.result || tipEl || document.querySelector(".overlay"))
+    return;
+  for (const t of TIPS) {
+    if (save.tips[t.id]) continue;
+    let ok = false;
+    try {
+      ok = t.when();
+    } catch (e) {}
+    const el = ok && app.querySelector(t.target);
+    if (!el) continue;
+    save.tips[t.id] = 1; // shown once, never again
+    persist();
+    el.classList.add("hint");
+    const b = document.createElement("div");
+    b.className = "tip";
+    b.innerHTML = `<span>${t.text}</span><button aria-label="Got it">OK</button>`;
+    document.body.appendChild(b);
+    const r = el.getBoundingClientRect(),
+      W = document.documentElement.clientWidth;
+    const bw = Math.min(260, W - 20);
+    b.style.width = bw + "px";
+    const left = Math.max(
+      10,
+      Math.min(W - bw - 10, r.left + r.width / 2 - bw / 2),
+    );
+    const below =
+      r.bottom + b.offsetHeight + 16 < window.innerHeight ||
+      r.top < b.offsetHeight + 20;
+    b.style.left = left + "px";
+    b.style.top =
+      (below
+        ? r.bottom + window.scrollY + 12
+        : r.top + window.scrollY - b.offsetHeight - 12) + "px";
+    b.classList.add(below ? "below" : "above");
+    b.style.setProperty(
+      "--ax",
+      Math.max(16, Math.min(bw - 16, r.left + r.width / 2 - left)) + "px",
+    );
+    b.querySelector("button").onclick = clearTip;
+    tipEl = b;
+    return;
+  }
+}
+
+/* ---------- THE SCREEN ---------- */
+const pipsHTML = (n, cap) =>
+  `<span class="pips">${Array.from({ length: cap }, (_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</span>`;
 
 function projection() {
   const a = game.alloc,
@@ -1567,26 +1603,25 @@ function projection() {
     risk = out
       ? game.warning
         ? stormDose()
-        : RealData.DOSE[4] // outside: nothing blocks it
+        : RealData.DOSE[4]
       : game.warning
         ? stormHit(a.S)
-        : Math.max(0, RealData.DOSE[4] - lv("walls") - 2 * a.S); // worst case
+        : Math.max(0, RealData.DOSE[4] - lv("walls") - 2 * a.S);
   let air = -CONFIG.crewAir + 2 * a.L + a.G;
   let food = -CONFIG.crewFood + (2 + lv("seeds")) * a.G;
-  // Known game events show up in the result. The surprise burst does not: it is a surprise.
   if (ev === "dent" && !game.repair[game.sol]) air -= CONFIG.dentAir;
   if (ev === "bloom" && a.G >= CONFIG.bloomNeed) food += CONFIG.bloomFood;
   return {
     air,
     food,
     dose: (a.S ? 0 : 0.25) + (out ? CONFIG.evaDose : 0),
-    risk, // extra radiation from today's storm
+    risk,
     unknown: lvl > 0 && !game.warning,
     research: out ? CONFIG.evaScience : 0,
     carry: a.B,
   };
 }
-// Little picture of the base. Lights turn on when you give a building power.
+
 function scene() {
   const a = game.alloc;
   const t = dustToday() ? "dust" : stormLevel() > 0 ? "storm" : "";
@@ -1609,56 +1644,94 @@ function scene() {
   </svg>`;
 }
 
-/* ---------- DRAWING THE SCREEN ---------- */
 function meter(icon, label, value, max, lowWhen) {
   const low = lowWhen(value);
-  return `<div class="meter ${low ? "low" : ""}">
+  return `<div class="meter ${low ? "low" : ""}" title="${label}">
     <div class="icon">${ic(icon)}</div>
     <div class="bar"><i style="width:${Math.max(0, (value / max) * 100)}%"></i></div>
-    <div class="label">${label} ${fmt(value)}/${max}</div></div>`;
+    <div class="label">${label} ${fmt(value)}</div></div>`;
+}
+
+// One big tap target per system. Tap = +1 cell, small − = take one back.
+function pad(k, name, n, cap, canAdd, hint) {
+  return `<div class="pad p-${k}" title="${hint}">
+    <button class="padmain" onclick="change('${k}',1)" ${canAdd ? "" : "disabled"} aria-label="Add power to ${name}">${ic(k === "B" ? "battery" : k)}<b>${name}</b>${pipsHTML(n, cap)}</button>
+    <button class="padminus" onclick="change('${k}',-1)" ${n === 0 ? "disabled" : ""} aria-label="Take power from ${name}">−</button>
+  </div>`;
+}
+
+function evaCard() {
+  if (!game.evaSlots) return "";
+  const on = isOut(),
+    left = game.evaSlots - game.evaUsed;
+  const noPower = !on && used() >= power();
+  return `<div class="evacard ${stormLevel() > 0 ? "danger" : ""}">
+    <button class="evabtn" onclick="toggleEva()" ${!on && (left <= 0 || noPower) ? "disabled" : ""}>
+      ${ic("eva")}<span><b>${on ? "Going outside! Tap to cancel" : left <= 0 ? "No spacewalks left" : "Spacewalk"}</b>
+      <small>${on ? "" : `+${CONFIG.evaScience} research · costs 1 power · no shield outside`}${noPower && left > 0 ? " · free up 1 power first" : ""}</small></span>
+      ${pipsHTML(left, game.evaSlots)}
+    </button>
+    ${stormLevel() > 0 ? `<p class="warnline">Storm today. Nothing protects you outside!</p>` : ""}
+  </div>`;
 }
 
 function render() {
+  clearTip();
   if (game.result) return renderEnd();
   const p = power(),
-    lvl = stormLevel();
+    lvl = stormLevel(),
+    u = used();
 
-  // Today's events. Storm = real data. Dust and game events = made by the game.
+  // Today's events. Storm = real data (solid). Dust and game events = made by the game (dashed).
   let eventCard = "";
   if (lvl > 0) {
-    const e = forecast().find((x) => x.offset === 0),
+    const S = game.alloc.S,
       need = shelterNeed(),
-      h = HISTORY[(game.sol + game.level) % HISTORY.length];
-    eventCard += `<div class="card warn"><h2>${ic("dose")} Storm cloud reaching Mars today</h2>
-      <p>${
-        game.warning
-          ? `Strength: <b>${RealData.NAMES[lvl]}</b>. Blocking it all takes <b>${need}</b> shelter power.`
-          : `Strength unknown. Blocking it takes <b>${needRange()}</b> shelter power. The early-warning satellite shows how strong it is.`
-      } Skip the shelter and you are gambling.</p>
-      <div class="realtag"><b>Real event.</b> ${e ? `NASA’s model predicted it would arrive ${e.windowText}.` : "This cloud was not in the forecast yet."}<small>Source: NASA DONKI, archived copy · ${dateOf(game.sol)}</small></div>
-      ${more("fact", "History: other big storms", `<p class="fact"><b>${h.title}.</b> ${h.fact}</p>`)}</div>`;
+      lo = needLo(),
+      hi = needHi();
+    const spips = Array.from({ length: 4 }, (_, i) => {
+      const cls = game.warning
+        ? i < need
+          ? "need"
+          : ""
+        : i < lo
+          ? "need"
+          : i < hi
+            ? "maybe"
+            : "";
+      return `<i class="${cls} ${i < S ? "on" : ""}"></i>`;
+    }).join("");
+    const enough = game.warning ? S >= need : S >= hi;
+    eventCard += `<div class="card warn eventcard stormcard">
+      <div class="evhead">${ic("dose")}<h2>Storm today!</h2>
+        <button class="nasabadge" onclick="showSource()">${ic("info")} Real NASA data</button></div>
+      <div class="shieldrow">${ic("S")}<span class="spips">${spips}</span>
+        <b class="${enough ? "okk" : ""}">${enough ? "Safe" : game.warning ? `${S}/${need}` : `${S}/?`}</b></div>
+      <p class="short">${game.warning ? `${RealData.NAMES[lvl]} storm. Fill the shield to ${need}.` : `Strength unknown. Fill the shield (${needRange()}).`}</p>
+    </div>`;
   }
   if (dustToday())
-    eventCard += `<div class="card warn"><h2>${ic("dust")} ${DUST.title}</h2>
-      <p>Power drops to <b>${p} units</b> today.</p>
-      ${more("dust", "Real NASA fact", `<p class="fact">Dust storms in this game are random game events, not from the archive. ${DUST.fact}</p>`)}</div>`;
+    eventCard += `<div class="card gameevt eventcard dustcard">
+      <div class="evhead">${ic("dust")}<h2>Dust storm</h2></div>
+      <p class="short">Power is only <b>${p}</b> today.</p>
+      <small class="gtag">${GAME_TAG}</small></div>`;
 
   const gev = gameEventToday();
   if (gev === "dent") {
     const fixed = !!game.repair[game.sol];
-    eventCard += `<div class="card gameevt"><h2>${ic("L")} Micrometeorite dent</h2>
-      <p>A tiny space rock dented the outside wall. Unless it is repaired, <b>${CONFIG.dentAir} air</b> will leak out today.</p>
+    eventCard += `<div class="card gameevt eventcard">
+      <div class="evhead">${ic("L")}<h2>Dented wall</h2></div>
       ${
         fixed
-          ? `<p class="fact">Repair bot sent. It used 1 power, and the dent will be sealed.</p>`
-          : `<button class="item" onclick="sendBot()" ${used() >= p ? "disabled" : ""}>Send the repair bot<br><small>Costs 1 power. Saves ${CONFIG.dentAir} air.${used() >= p ? " Take 1 power off a system first." : ""}</small></button>`
+          ? `<p class="short">${ic("check")} Bot sent. The dent will be sealed.</p>`
+          : `<button class="bigbtn botbtn" onclick="sendBot()" ${u >= p ? "disabled" : ""}>Send the repair bot<small>costs 1 power · saves ${CONFIG.dentAir} air${u >= p ? " · free up 1 power first" : ""}</small></button>`
       }
       <small class="gtag">${GAME_TAG}</small></div>`;
   } else if (gev === "bloom") {
-    const ready = game.alloc.G >= CONFIG.bloomNeed;
-    eventCard += `<div class="card gameevt"><h2>${ic("G")} The plants are blooming</h2>
-      <p>Give the greenhouse <b>${CONFIG.bloomNeed} or more power</b> today to harvest <b>${CONFIG.bloomFood} extra food</b>. With less, the blooms are wasted. That power then cannot go to the shelter or life support.</p>
-      <p class="fact">${ready ? "The greenhouse has enough power. The harvest is on." : `Greenhouse power now: ${game.alloc.G}.`}</p>
+    const g = game.alloc.G;
+    eventCard += `<div class="card gameevt eventcard bloomcard">
+      <div class="evhead">${ic("G")}<h2>Blooming plants</h2></div>
+      <p class="short">Food ${CONFIG.bloomNeed}+ cells = <b>+${CONFIG.bloomFood} food</b>. Now: ${g}.${g >= CONFIG.bloomNeed ? " " + "Harvest is on!" : ""}</p>
       <small class="gtag">${GAME_TAG}</small></div>`;
   }
 
@@ -1667,67 +1740,59 @@ function render() {
       length: Math.max(p, CONFIG.normalPower + lv("panels") + game.discoveries),
     },
     (_, i) =>
-      `<div class="cell ${i < used() ? "on" : ""} ${i >= p ? "dead" : ""}"></div>`,
+      `<div class="cell ${i < u ? "on" : ""} ${i >= p ? "dead" : ""}"></div>`,
   ).join("");
 
   const sgn = (n) => (n > 0 ? "+" + n : n < 0 ? "−" + Math.abs(n) : "0");
   const pr = projection();
-  const proj = `<div class="proj"><b>Result:</b>
-    <span class="${pr.air < 0 ? "neg" : "pos"}">${ic("L")} Air ${sgn(pr.air)}</span>
-    <span class="${pr.food < 0 ? "neg" : "pos"}">${ic("food")} Food ${sgn(pr.food)}</span>
-    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} Rad ${sgn(pr.dose)}</span>
-    ${pr.research ? `<span class="pos">${ic("eva")} Spacewalk +${pr.research} research</span>` : ""}
-    ${pr.carry ? `<span class="pos">${ic("battery")} +${pr.carry} power tomorrow</span>` : ""}
-    ${pr.risk > 0 ? `<span class="neg">${ic("dose")} ${pr.unknown ? "up to +" + pr.risk + " more, depending on strength" : "+" + pr.risk + " more from the storm"}</span>` : ""}</div>`;
+  const proj = `<div class="proj">
+    <span class="${pr.air < 0 ? "neg" : "pos"}">${ic("L")} ${sgn(pr.air)}</span>
+    <span class="${pr.food < 0 ? "neg" : "pos"}">${ic("food")} ${sgn(pr.food)}</span>
+    <span class="${pr.dose > 0 ? "neg" : "pos"}">${ic("dose")} ${sgn(pr.dose)}</span>
+    ${pr.research ? `<span class="pos">${ic("R")} +${pr.research}</span>` : ""}
+    ${pr.carry ? `<span class="pos">${ic("battery")} +${pr.carry} tomorrow</span>` : ""}
+    ${pr.risk > 0 ? `<span class="neg">${ic("dose")} ${pr.unknown ? "up to +" : "+"}${pr.risk} storm</span>` : ""}</div>`;
 
-  const systems = SYSTEMS.map(
-    (s) => `
-    <div class="mod m-${s.key}" title="${s.hint}">
-      <div class="mh">${ic(s.key)}<b>${s.name}</b></div>
-      <div class="stepper">
-        <button onclick="change('${s.key}',-1)" aria-label="Less power to ${s.name}" ${game.alloc[s.key] === 0 ? "disabled" : ""}>−</button>
-        <span>${game.alloc[s.key]}</span>
-        <button onclick="change('${s.key}',1)" aria-label="More power to ${s.name}" ${used() >= p || game.alloc[s.key] >= 4 ? "disabled" : ""}>+</button>
-      </div>
-      ${game.strain[s.key] >= 1 && game.strain[s.key] < CONFIG.strainDays ? `<small class="hotnote">Running hot! Full power again will overheat it.</small>` : ""}
-    </div>`,
-  ).join("");
-
-  // Battery: power stored today arrives tomorrow
   const lastDay = game.sol >= game.total;
-  const battery = batteryOn()
-    ? `<div class="mod m-B" title="Power you store today arrives tomorrow.">
-        <div class="mh">${ic("battery")}<b>Battery</b></div>
-        <div class="stepper">
-          <button onclick="change('B',-1)" aria-label="Store less power" ${game.alloc.B === 0 ? "disabled" : ""}>−</button>
-          <span>${game.alloc.B}</span>
-          <button onclick="change('B',1)" aria-label="Store more power" ${used() >= p || game.alloc.B >= CONFIG.batteryCap || lastDay ? "disabled" : ""}>+</button>
-        </div>
-        <small class="fact">${lastDay ? "No tomorrow to save for." : `Stored power arrives tomorrow (up to ${CONFIG.batteryCap}). It does nothing for you today.`}</small>
-      </div>`
-    : "";
+  const pads =
+    SYSTEMS.map((s) =>
+      pad(
+        s.key,
+        s.short,
+        game.alloc[s.key],
+        4,
+        u < p && game.alloc[s.key] < 4,
+        s.hint,
+      ),
+    ).join("") +
+    (batteryOn()
+      ? pad(
+          "B",
+          "Battery",
+          game.alloc.B,
+          CONFIG.batteryCap,
+          u < p && game.alloc.B < CONFIG.batteryCap && !lastDay,
+          lastDay
+            ? "No tomorrow to save for."
+            : "Power you store today arrives tomorrow.",
+        )
+      : "");
 
   const help = more(
     "sys",
-    "What does each system do?",
-    SYSTEMS.map((s) => `<p class="fact"><b>${s.name}:</b> ${s.hint}</p>`).join(
+    "What does each tile do?",
+    SYSTEMS.map((s) => `<p class="fact"><b>${s.short}:</b> ${s.hint}</p>`).join(
       "",
     ) +
       (batteryOn()
-        ? `<p class="fact"><b>Battery:</b> power you put in today shows up as extra power tomorrow (up to ${CONFIG.batteryCap}). Good before a storm or a dust day.</p>`
+        ? `<p class="fact"><b>Battery:</b> power stored today shows up tomorrow (up to ${CONFIG.batteryCap}). It does nothing for you today.</p>`
         : "") +
-      (game.evaSlots
-        ? `<p class="fact"><b>Spacewalk:</b> ${game.evaSlots} per mission. Costs 1 power and ${CONFIG.evaDose} radiation, gives +${CONFIG.evaScience} research. Outside, the shelter cannot protect the crew.</p>`
-        : "") +
-      `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew must go home.</p>` +
-      `<p class="fact"><b>Overheating:</b> a system at full power ${CONFIG.strainDays} days in a row breaks (${CONFIG.strainPenalty} less power next day).</p>` +
-      `<p class="fact"><b>Discoveries:</b> every ${CONFIG.discoveryEvery} research points gives +1 power for the rest of the mission (max ${CONFIG.maxDiscoveries}). You have ${game.discoveries}.</p>` +
-      `<p class="fact"><b>Cargo on this mission:</b> ${game.cargo.map(nameOf).join(", ") || "nothing packed"}.</p>`,
+      `<p class="fact"><b>Radiation</b> never goes down. At ${CONFIG.doseLimit}, the crew goes home.</p>` +
+      `<p class="fact"><b>Discoveries:</b> every ${CONFIG.discoveryEvery} research points gives +1 power for the rest of the mission. You have ${game.discoveries}.</p>` +
+      `<p class="fact"><b>Cargo:</b> ${game.cargo.map(nameOf).join(", ") || "nothing packed"}.</p>`,
   );
 
-  const bonusLeft = game.quizRes[game.sol] ? 0 : 1;
-
-  const left = p - used();
+  const left = p - u;
   const why = game.penaltyWhy[game.sol] || [];
   const carried = game.carry[game.sol] || 0;
 
@@ -1741,40 +1806,46 @@ function render() {
     <div class="col">
       <div class="card hud">
         <div class="hudrow">
-          <span class="big">Day ${game.sol}<small> / ${game.total} · ${shortDate(game.sol)}</small></span>
-          <span>${ic("R")} ${game.science} pts${game.discoveries ? ` · +${game.discoveries} power` : ""}</span>
+          <span class="big">Day ${game.sol}<small> / ${game.total}</small></span>
+          <span>${ic("R")} ${game.science}${game.discoveries ? ` · +${game.discoveries} power` : ""}</span>
         </div>
         <div class="progress"><i style="width:${(game.sol / game.total) * 100}%"></i></div>
-        <small class="replay">Replaying real days: ${RealData.fmtD(game.M.startDate)} to ${RealData.fmtD(game.M.endDate)} (NASA DONKI, archived)</small>
         <div class="meters">
           ${meter("L", "Air", game.air, game.maxStock, (v) => v <= 3)}
           ${meter("food", "Food", game.food, game.maxStock, (v) => v <= 3)}
           ${meter("dose", "Radiation", game.dose, CONFIG.doseLimit, (v) => v >= 6)}
         </div>
+        <small class="replay">${shortDate(game.sol)} · replaying ${RealData.fmtD(game.M.startDate)} to ${RealData.fmtD(game.M.endDate)}</small>
       </div>
-      ${game.penalty[game.sol] ? `<div class="card warn"><b>${game.penalty[game.sol]} less power today</b> because ${why.join(" and ")}.</div>` : ""}
+      ${game.penalty[game.sol] ? `<div class="card warn"><b>−${game.penalty[game.sol]} power today</b> (${why.join(" and ")})</div>` : ""}
       ${eventCard}
-      ${forecastStrip()}
+      ${skyStrip()}
     </div>
 
     <div class="col">
       <div class="card">
         ${scene()}
-        <div class="powerhead"><h2>Power ${used()} / ${p}</h2><div class="cells">${cells}</div></div>
-        ${carried ? `<small class="fact">Includes +${carried} stored in the battery yesterday.</small>` : ""}
-        <div class="mods">${systems}${battery}</div>
+        <div class="powerhead"><h2>Power ${u} / ${p}</h2><div class="cells">${cells}</div></div>
+        ${carried ? `<small class="fact">Includes +${carried} saved in the battery yesterday.</small>` : ""}
+        <div class="pads">${pads}</div>
         ${proj}
-        ${help}
         ${evaCard()}
-        <button class="go" onclick="runSol()" ${left > 0 ? "disabled" : ""}>${left > 0 ? `Use ${left} more power to run the day` : `Run Day ${game.sol} ▶`}</button>
+        <div class="runrow">
+          ${game.lastPlan && u === 0 ? `<button class="go alt" onclick="sameAsYesterday()">${ic("undo")} Same as yesterday</button>` : ""}
+          <button class="go rungo" onclick="runSol()" ${left > 0 ? "disabled" : ""}>${left > 0 ? `Use ${left} more cell${left > 1 ? "s" : ""}` : `Run Day ${game.sol} ▶`}</button>
+        </div>
+        <div class="tools">
+          <button class="mini" onclick="showMail()">${ic("mail")} Earth mail</button>
+          <button class="mini" onclick="showQuiz()">${ic("quiz")} Quiz</button>
+        </div>
+        ${help}
       </div>
-      ${fold("bonus", "Bonus question", quizCard(), bonusLeft ? `<span class="pill">${bonusLeft}</span>` : "")}
-      ${extras()}
     </div>
   </div>`;
+  tipSoon();
 }
 
-// Best and worst moments of the mission, with the day they happened
+/* ---------- END SCREEN ---------- */
 function debriefHTML() {
   const good = game.log.filter((e) => e.tone === "good").slice(0, 2);
   const bad = game.log.filter((e) => e.tone === "bad").slice(-3);
@@ -1789,7 +1860,6 @@ function debriefHTML() {
   }</div>`;
 }
 
-// What the archive says really happened in the days the mission replayed
 function recapCard() {
   const M = game.M,
     played = game.result === "win" ? game.total : game.sol;
@@ -1805,7 +1875,6 @@ function recapCard() {
         `<li><b>Day ${l.day} · ${RealData.fmtD(l.date)} · ${l.name}</b>${l.text}</li>`,
     )
     .join("");
-  if (game.ui.real === undefined) game.ui.real = true;
   return fold(
     "real",
     "What really happened in this window",
@@ -1820,10 +1889,10 @@ function renderEnd() {
   const win = game.result === "win";
   const nxt = tierInfo(save.level);
   const msg = {
-    win: `Mission ${game.level + 1} cleared! ${game.science} research points.`,
+    win: `Mission ${game.level + 1} cleared!`,
     air: "The air ran out.",
     food: "The food ran out.",
-    dose: "The crew reached the radiation limit and had to go home.",
+    dose: "Too much radiation. The crew went home.",
   }[game.result];
   const chk = (ok, text) =>
     `<p class="chk ${ok ? "ok" : "no"}">${ok ? "✔" : "✖"} ${text}</p>`;
@@ -1833,18 +1902,17 @@ function renderEnd() {
     const nextLine = game.unlocked
       ? `Unlocked: <b>Mission ${nxt.level + 1}</b>, ${nxt.days} days. It will be harder!`
       : save.level >= CONFIG.maxLevel
-        ? "That was the final mission tier. Replay it to earn more stars."
+        ? "That was the final mission. Replay it for more stars."
         : "Replaying an old mission. Your next mission is still waiting.";
     result = `<div class="card news"><h2>Stars: <span class="stars">${starsStr(game.stars)}</span></h2>
       ${chk(true, `Survived all ${game.total} days`)}
       ${chk(game.okDose, `Radiation under ${fmt(CONFIG.doseLimit * 0.3)} (you had ${fmt(game.dose)})`)}
-      ${chk(game.okSci, `${game.goal}+ research points (you had ${game.science})`)}
-      <p>You earned <b>${game.earned}</b> points and now have <b>${save.points}</b> to spend.</p>
+      ${chk(game.okSci, `${game.goal}+ research (you had ${game.science})`)}
+      <p>+<b>${game.earned}</b> points. You have <b>${save.points}</b>.</p>
       <p>${nextLine}</p></div>`;
   } else {
-    result = `<div class="card news"><h2>You earned ${game.earned} research points</h2>
-      <p>You now have <b>${save.points}</b> to spend.</p>
-      <p>You stay on <b>Mission ${nxt.level + 1}</b> (${nxt.days} days) until you clear it. The next try replays a different real stretch. Try packing different cargo!</p></div>`;
+    result = `<div class="card news"><h2>+${game.earned} research points</h2>
+      <p>You have <b>${save.points}</b> to spend. You stay on <b>Mission ${nxt.level + 1}</b>. The next try replays a different real stretch. Try different cargo!</p></div>`;
   }
 
   app.innerHTML = `
@@ -1855,14 +1923,12 @@ function renderEnd() {
     ${fold(
       "learn",
       "What you learned",
-      `<p><b>Power is limited.</b> Every unit for science was a unit not used to stay safe.</p>
-      <p><b>Warnings are predictions.</b> NASA’s DONKI model predicts when solar storm clouds reach Mars. Planners use them to decide when to shelter, but real clouds can arrive early, late or miss.</p>
-      <p><b>Fast clouds hit harder.</b> Knowing a cloud’s speed tells you how much shelter you need.</p>
-      <p><b>Quiet is not safe.</b> A day with nothing in the log can still have surprises, so crews keep a reserve.</p>
-      <p><b>Mars can surprise you.</b> Dust storms cut solar power, like the one in 2018 that stopped the Opportunity rover.</p>
-      <p><b>Help is far away.</b> Signals between Earth and Mars take about 3 to 22 minutes each way, depending on where the planets are. Sometimes Earth’s answer arrives too late, so crews must decide on their own.</p>
-      <p><b>Everything is connected.</b> Pushing one system too hard breaks it, and a tired crew makes less power.</p>
-      <p><b>Cargo is limited.</b> A rocket can only carry so much, so crews choose what to bring.</p>`,
+      `<p><b>Power is limited.</b> Every cell for science was a cell not used to stay safe.</p>
+      <p><b>Warnings are predictions.</b> NASA’s DONKI model predicts when solar storm clouds reach Mars. Real clouds can arrive early, late or miss.</p>
+      <p><b>Fast clouds hit harder.</b> A cloud’s speed tells you how much shelter you need.</p>
+      <p><b>Quiet is not safe.</b> A day with nothing in the log can still have surprises.</p>
+      <p><b>Help is far away.</b> Signals between Earth and Mars take about 3 to 22 minutes each way, so crews must sometimes decide on their own.</p>
+      <p><b>Cargo is limited.</b> A rocket can only carry so much.</p>`,
     )}
     <button class="go" onclick="showMenu()">Cargo &amp; upgrades</button>
     <button class="go alt" onclick="startMission()">${win ? "Start Mission " + (nxt.level + 1) + " now" : "Try again now"}</button>
@@ -1878,7 +1944,6 @@ function renderEnd() {
   const $$ = (sel) => Array.from(app.querySelectorAll(sel));
   let enterTimer = 0;
 
-  // Confetti for wins and discoveries
   function confetti(n) {
     if (reduce) return;
     const wrap = document.createElement("div");
@@ -1896,7 +1961,6 @@ function renderEnd() {
     setTimeout(() => wrap.remove(), 4000);
   }
 
-  // Slide the screen's cards in one after another
   function stagger() {
     if (reduce) return;
     $$(":scope > :not(.layout), .col > *, .topbar").forEach((el) => {
@@ -1910,18 +1974,14 @@ function renderEnd() {
     enterTimer = setTimeout(() => app.classList.remove("enter"), 1400);
   }
 
-  // Looping animations restart on every redraw. This keeps them in step so they do not jump.
   const SYNC = [
     ".rays",
     '.scene circle[cx="505"]',
     '.scene.dust rect[fill="#b8742f"]',
-    ".ftile.storm .ic",
-    ".ftile.dust .ic",
     ".card.warn",
-    ".dot",
-    ".hotnote",
     ".col button.go:not(:disabled):not(.alt)",
     ".meter.low .icon",
+    ".hint",
   ].join(",");
   function sync() {
     if (reduce) return;
@@ -1933,7 +1993,6 @@ function renderEnd() {
     });
   }
 
-  // ----- Game screen -----
   let last = { g: null };
   const origRender = window.render;
   window.render = function () {
@@ -1941,7 +2000,6 @@ function renderEnd() {
     const barsBefore = same
       ? $$(".meter .bar i, .progress i").map((b) => b.style.width)
       : [];
-    const stepsBefore = $$(".stepper span").map((s) => s.textContent);
     const onBefore = $$(".cell.on").length;
 
     origRender.apply(this, arguments);
@@ -1950,9 +2008,7 @@ function renderEnd() {
     const sameDay = same && last.sol === g.sol;
     if (!reduce) {
       if (!same || !sameDay || (g.result && !last.result)) stagger();
-
       if (same && !g.result) {
-        // Bars slide from their old value to the new one
         const now = $$(".meter .bar i, .progress i");
         if (now.length === barsBefore.length)
           now.forEach((b, i) => {
@@ -1961,7 +2017,6 @@ function renderEnd() {
             void b.offsetWidth;
             b.style.width = to;
           });
-        // Meters flash when they change
         const m = $$(".meter");
         const vals = [g.air, g.food, g.dose];
         const prev = [last.air, last.food, last.dose];
@@ -1971,22 +2026,12 @@ function renderEnd() {
             m[i].classList.add(better ? "gain" : "loss");
           }
         });
-        // Power cells and stepper numbers react to the player's clicks
-        if (sameDay) {
-          $$(".stepper span").forEach((s, i) => {
-            if (
-              stepsBefore[i] !== undefined &&
-              stepsBefore[i] !== s.textContent
-            )
-              s.classList.add("pop");
-          });
+        if (sameDay)
           $$(".cell.on").forEach((c, i) => {
             if (i >= onBefore) c.classList.add("fresh");
           });
-        }
       }
     }
-
     if (g.result === "win" && !g.celebrated) {
       g.celebrated = true;
       confetti(60);
@@ -2002,14 +2047,14 @@ function renderEnd() {
     sync();
   };
 
-  // ----- Pop-ups -----
   const origPopup = window.popup;
   window.popup = function (html) {
     const box = origPopup.call(this, html);
     const al = box.querySelector(".alert");
     if (!al) return box;
+    clearTip();
     if (!reduce) {
-      [".rep li", ".chips .chip", ".choice"].forEach((sel) =>
+      [".rep li", ".bigchip", ".choice"].forEach((sel) =>
         Array.from(box.querySelectorAll(sel)).forEach((el, i) =>
           el.style.setProperty("--i", i),
         ),
@@ -2017,25 +2062,15 @@ function renderEnd() {
       if (al.querySelector("li.bad, .g-bad")) al.classList.add("shake");
       if (html.indexOf("Discovery!") >= 0) setTimeout(() => confetti(26), 450);
     }
-    // Emergency countdown: tick each second, glow red in the last 3 seconds
-    const num = box.querySelector(".timer ~ .count b");
-    if (num)
-      new MutationObserver(() => {
-        num.classList.remove("tick");
-        void num.offsetWidth;
-        num.classList.add("tick");
-        if (+num.textContent <= 3) al.classList.add("urgent");
-      }).observe(num, { childList: true, characterData: true, subtree: true });
     return box;
   };
 
-  // ----- Menu screens -----
   ["showMain", "showMenu", "showHow", "showAbout"].forEach((name) => {
     const orig = window[name];
     window[name] = function (a) {
       const r = orig.apply(this, arguments);
       last = { g: null };
-      // Buying or packing redraws the menu. Do not replay the entrance for that.
+      clearTip();
       if (!(name === "showMenu" && a === true)) stagger();
       return r;
     };
